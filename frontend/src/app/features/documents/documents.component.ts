@@ -1,0 +1,3 @@
+import { Component, OnInit } from '@angular/core';import { CommonModule } from '@angular/common';import { HttpClient } from '@angular/common/http';
+@Component({selector:'app-documents',standalone:true,imports:[CommonModule],template:`<section class="page"><h2>Vehicle Documents & Evidence</h2><div class="card"><table><tr><th>Type</th><th>File</th><th>Uploaded</th><th>Status</th></tr><tr *ngFor="let x of rows"><td>{{x.type}}</td><td>{{x.file}}</td><td>{{x.uploaded}}</td><td>{{x.status}}</td></tr></table></div></section>`,styles:[`.page{padding:26px}.card{margin-top:16px}`]})
+export class DocumentsComponent implements OnInit{rows:any[]=[];constructor(private http:HttpClient){}ngOnInit(){this.http.get<any[]>('/api/documents/MT7T72036001234').subscribe(x=>this.rows=x)}}

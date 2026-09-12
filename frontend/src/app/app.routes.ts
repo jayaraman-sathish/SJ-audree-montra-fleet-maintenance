@@ -14,22 +14,10 @@ import { ChecklistComponent } from './features/checklist/checklist.component';
 import { OffhireComponent } from './features/offhire/offhire.component';
 import { QualityComponent } from './features/quality/quality.component';
 import { AuditComponent } from './features/audit/audit.component';
-
-export const routes: Routes = [
-  { path: '', component: DashboardComponent },
-  { path: 'vehicle', component: VehicleComponent },
-  { path: 'pm', component: PmComponent },
-  { path: 'appointments', component: AppointmentsComponent },
-  { path: 'technicians', component: TechniciansComponent },
-  { path: 'service', component: ServiceComponent },
-  { path: 'breakdown', component: BreakdownComponent },
-  { path: 'job-card', component: JobCardComponent },
-  { path: 'checklist', component: ChecklistComponent },
-  { path: 'parts', component: PartsComponent },
-  { path: 'release', component: ReleaseComponent },
-  { path: 'availability', component: AvailabilityComponent },
-  { path: 'offhire', component: OffhireComponent },
-  { path: 'quality', component: QualityComponent },
-  { path: 'audit', component: AuditComponent },
-  { path: '**', redirectTo: '' }
-];
+import { SlaComponent } from './features/sla/sla.component';
+import { WarrantyComponent } from './features/warranty/warranty.component';
+import { CampaignsComponent } from './features/campaigns/campaigns.component';
+import { DocumentsComponent } from './features/documents/documents.component';
+import { SearchComponent } from './features/search/search.component';
+export const routes: Routes=[
+{path:'',component:DashboardComponent},{path:'search',component:SearchComponent},{path:'vehicle',component:VehicleComponent},{path:'pm',component:PmComponent},{path:'appointments',component:AppointmentsComponent},{path:'technicians',component:TechniciansComponent},{path:'service',component:ServiceComponent},{path:'breakdown',component:BreakdownComponent},{path:'job-card',component:JobCardComponent},{path:'checklist',component:ChecklistComponent},{path:'parts',component:PartsComponent},{path:'warranty',component:WarrantyComponent},{path:'campaigns',component:CampaignsComponent},{path:'documents',component:DocumentsComponent},{path:'sla',component:SlaComponent},{path:'release',component:ReleaseComponent},{path:'availability',component:AvailabilityComponent},{path:'offhire',component:OffhireComponent},{path:'quality',component:QualityComponent},{path:'audit',component:AuditComponent},{path:'**',redirectTo:''}];
