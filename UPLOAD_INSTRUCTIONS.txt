@@ -1,0 +1,20 @@
+UPLOAD TO GITHUB - SIMPLE STEPS
+
+1. Download and unzip this package on your Windows PC.
+2. Open GitHub repository:
+   jayaraman-sathish/SJ-audree-montra-fleet-maintenance
+3. Switch branch to: milestone-1-foundation
+4. Click Add file -> Upload files.
+5. Open the extracted folder named montra_upload_bundle.
+6. Select ALL files and folders inside it and drag them into the GitHub upload area.
+7. GitHub may warn that some files already exist. Replace/update them when prompted.
+8. Commit message: Expand PM and service execution vertical flow
+9. Commit directly to the milestone-1-foundation branch.
+
+IMPORTANT:
+- Do not upload the ZIP itself into the repository.
+- Upload the extracted contents.
+- Do not upload to main yet.
+- Do not merge Pull Request #1 yet.
+
+This package contains the complete current working source structure plus the next PM/service-flow build batch.

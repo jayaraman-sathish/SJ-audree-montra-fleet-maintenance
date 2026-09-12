@@ -1,0 +1,19 @@
+<div class="shell">
+  <aside>
+    <div class="brand"><span class="mark">A</span><strong>AUDREE</strong></div>
+    <nav>
+      <a class="active">Dashboard</a><a>Vehicles</a><a>PM Management</a><a>Appointments</a><a>Service Events</a><a>Job Cards</a><a>Breakdowns / RSA</a><a>Parts & Inventory</a><a>Warranty</a><a>Campaigns</a><a>Reports</a><a>Administration</a>
+    </nav>
+  </aside>
+  <main>
+    <header><div><h1>Fleet Maintenance, Breakdown & Uptime</h1><p>Maintain Today. Move Tomorrow.</p></div><div class="user">RK &nbsp; Ravi Kumar<br><small>Service Centre Manager</small></div></header>
+    <section class="title"><div><h2>Service Centre Overview</h2><p>Chennai Service Centre · 11 Sep 2026</p></div><button>+ Create Service Event</button></section>
+    <section class="kpis"><article *ngFor="let k of kpis"><span>{{k[0]}}</span><strong>{{k[1]}}</strong></article></section>
+    <section class="grid">
+      <article class="panel"><h3>Service Centre Load</h3><div class="big">18 <small>jobs scheduled today</small></div><div class="bar"><i></i></div><p>Bay utilization 72% · Technician utilization 68%</p></article>
+      <article class="panel"><h3>PM Compliance</h3><div class="big good">94.2%</div><p>Due soon 34 &nbsp; | &nbsp; Due 16 &nbsp; | &nbsp; Overdue 12</p></article>
+      <article class="panel"><h3>Breakdown Requests</h3><table><tr><th>Vehicle</th><th>Priority</th><th>Status</th></tr><tr><td>TN12AB1234</td><td>P1</td><td>Technician assigned</td></tr><tr><td>KA05EV7782</td><td>P2</td><td>Awaiting towing</td></tr><tr><td>TN09CE4421</td><td>P2</td><td>Diagnosis</td></tr></table></article>
+      <article class="panel"><h3>Upcoming Appointments</h3><table><tr><th>Time</th><th>Vehicle</th><th>Type</th></tr><tr><td>09:30</td><td>TN12AB1234</td><td>PM Service</td></tr><tr><td>10:15</td><td>TN22EV9088</td><td>General Service</td></tr><tr><td>11:00</td><td>KA05EV7782</td><td>Breakdown</td></tr></table></article>
+    </section>
+  </main>
+</div>

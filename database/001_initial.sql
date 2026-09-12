@@ -1,0 +1,19 @@
+CREATE DATABASE MontraFleetMaintenance;
+GO
+USE MontraFleetMaintenance;
+GO
+CREATE TABLE Vehicles (
+  Id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+  Vin NVARCHAR(50) NOT NULL UNIQUE,
+  RegistrationNumber NVARCHAR(30) NULL,
+  Model NVARCHAR(100) NOT NULL,
+  Variant NVARCHAR(100) NULL,
+  CustomerName NVARCHAR(200) NULL,
+  DepotName NVARCHAR(200) NULL,
+  Status NVARCHAR(40) NOT NULL,
+  OdometerKm DECIMAL(18,2) NOT NULL DEFAULT 0,
+  OperatingHours DECIMAL(18,2) NOT NULL DEFAULT 0,
+  BatterySoc DECIMAL(5,2) NULL,
+  LastTelematicsAtUtc DATETIME2 NULL
+);
+GO
