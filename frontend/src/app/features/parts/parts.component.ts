@@ -1,0 +1,8 @@
+import { Component } from '@angular/core';
+import { CommonModule } from '@angular/common';
+@Component({selector:'app-parts',standalone:true,imports:[CommonModule],template:`
+<section class="page"><div class="title"><div><h2>Parts & Inventory</h2><p>Job-linked reservation, issue, return and warranty failed-part control.</p></div><button class="btn btn-primary">+ Request Part</button></div>
+<div class="cards"><div class="card"><span>Requested</span><b>3</b></div><div class="card"><span>Reserved</span><b>2</b></div><div class="card"><span>Issued</span><b>1</b></div><div class="card"><span>Warranty Return</span><b>1</b></div></div>
+<div class="card"><table><tr><th>Part No.</th><th>Description</th><th>Required</th><th>Reserved</th><th>Issued</th><th>Warranty</th><th>Status</th></tr><tr *ngFor="let x of rows"><td>{{x.no}}</td><td>{{x.desc}}</td><td>{{x.req}}</td><td>{{x.res}}</td><td>{{x.issue}}</td><td>{{x.warranty}}</td><td><span class="badge" [ngClass]="x.cls">{{x.status}}</span></td></tr></table></div>
+</section>`,styles:[`.page{padding:26px}.title{display:flex;justify-content:space-between;align-items:center}.title h2{margin:0}.title p{color:#64748b}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}.cards span{display:block;color:#64748b}.cards b{display:block;font-size:25px;margin-top:6px}@media(max-width:900px){.cards{grid-template-columns:1fr 1fr}}`]})
+export class PartsComponent{rows=[{no:'CL-7T-018',desc:'Coolant hose assembly',req:1,res:1,issue:0,warranty:'Yes',status:'Reserved',cls:'blue'},{no:'FLT-7T-002',desc:'Cabin filter',req:1,res:1,issue:1,warranty:'No',status:'Issued',cls:'green'},{no:'CLP-7T-007',desc:'Hose clamp',req:2,res:0,issue:0,warranty:'No',status:'Awaiting Stock',cls:'amber'}]}
