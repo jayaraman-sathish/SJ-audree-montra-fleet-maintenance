@@ -1,16 +1,9 @@
 import { Component } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
 @Component({
-  selector: 'app-root',
-  standalone: true,
-  imports: [CommonModule],
-  templateUrl: './app.component.html',
-  styleUrl: './app.component.css'
+  selector:'app-root',standalone:true,imports:[RouterOutlet,RouterLink,RouterLinkActive],
+  template:`<div class="shell"><aside><div class="brand"><span class="mark">A</span><strong>AUDREE</strong></div><nav><a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{exact:true}">Dashboard</a><a routerLink="/vehicle" routerLinkActive="active">Vehicles</a><a routerLink="/pm" routerLinkActive="active">PM Management</a><a routerLink="/service" routerLinkActive="active">Service Events</a><a>Appointments</a><a>Job Cards</a><a>Breakdowns / RSA</a><a>Parts & Inventory</a><a>Warranty</a><a>Reports</a><a>Administration</a></nav><div class="version">Montra Fleet Maintenance<br>v0.2</div></aside><main><header><div><h1>Montra Fleet Maintenance</h1><p>Maintain Today. Move Tomorrow.</p></div><div class="user">RK &nbsp; Ravi Kumar<br><small>Service Centre Manager</small></div></header><router-outlet/></main></div>`,
+  styles:[`.shell{display:grid;grid-template-columns:235px 1fr;min-height:100vh}aside{background:#071b3a;color:#fff;padding:22px 15px;position:relative}.brand{display:flex;gap:10px;align-items:center;font-size:22px;margin-bottom:24px}.mark{font-size:32px;font-weight:900;color:#ff6a35}nav{display:grid;gap:5px}nav a{padding:11px 12px;color:#dbe7fa;text-decoration:none;border-radius:7px;font-size:14px;cursor:pointer}nav a.active,nav a:hover{background:#123b73;color:#fff}.version{position:absolute;bottom:18px;left:18px;font-size:12px;color:#b9c6da}main{min-width:0}header{height:76px;background:#fff;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;padding:0 28px}header h1{margin:0;font-size:20px}header p{margin:4px 0 0;color:#64748b;font-size:13px}.user{text-align:right;font-size:13px}@media(max-width:900px){.shell{grid-template-columns:1fr}aside{display:none}}`]
 })
-export class AppComponent {
-  kpis = [
-    ['Total Vehicles','1,248'], ['In Service','1,102'], ['Under Maintenance','96'],
-    ['Off-hire','50'], ['Appointments Today','18'], ['Breakdowns','7'], ['PM Overdue','12'], ['SLA Breaches','3']
-  ];
-}
+export class AppComponent{}

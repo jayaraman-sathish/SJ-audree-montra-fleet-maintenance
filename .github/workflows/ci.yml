@@ -1,35 +1,24 @@
 name: CI
-
 on:
   pull_request:
     branches: [ main ]
   push:
     branches: [ main, milestone-1-foundation ]
-
 jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-      - name: Restore backend
-        run: dotnet restore backend/src/MontraFleet.Api/MontraFleet.Api.csproj
-      - name: Build backend
-        run: dotnet build backend/src/MontraFleet.Api/MontraFleet.Api.csproj --configuration Release --no-restore
-
+        with: { dotnet-version: '8.0.x' }
+      - run: dotnet restore backend/src/MontraFleet.Api/MontraFleet.Api.csproj
+      - run: dotnet build backend/src/MontraFleet.Api/MontraFleet.Api.csproj --configuration Release --no-restore
   frontend:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
+    defaults: { run: { working-directory: frontend } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: '20.x'
-      - name: Install frontend dependencies
-        run: npm install
-      - name: Build frontend
-        run: npm run build
+        with: { node-version: '20.x' }
+      - run: npm install
+      - run: npm run build

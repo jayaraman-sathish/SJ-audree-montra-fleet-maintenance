@@ -1,19 +1,3 @@
-using Microsoft.EntityFrameworkCore;
-using MontraFleet.Api.Models;
-
+using Microsoft.EntityFrameworkCore;using MontraFleet.Api.Models;
 namespace MontraFleet.Api.Data;
-
-public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
-{
-    public DbSet<Vehicle> Vehicles => Set<Vehicle>();
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        modelBuilder.Entity<Vehicle>(entity => {
-            entity.HasKey(x => x.Id);
-            entity.HasIndex(x => x.Vin).IsUnique();
-            entity.Property(x => x.Vin).HasMaxLength(50).IsRequired();
-            entity.Property(x => x.RegistrationNumber).HasMaxLength(30);
-        });
-    }
-}
+public class AppDbContext(DbContextOptions<AppDbContext> options):DbContext(options){public DbSet<Vehicle> Vehicles=>Set<Vehicle>();public DbSet<PmObligation> PmObligations=>Set<PmObligation>();public DbSet<Appointment> Appointments=>Set<Appointment>();public DbSet<ServiceEvent> ServiceEvents=>Set<ServiceEvent>();public DbSet<JobCard> JobCards=>Set<JobCard>();public DbSet<WorkItem> WorkItems=>Set<WorkItem>();public DbSet<VehicleAvailabilityLedger> VehicleAvailabilityLedger=>Set<VehicleAvailabilityLedger>();protected override void OnModelCreating(ModelBuilder m){m.Entity<Vehicle>().HasIndex(x=>x.Vin).IsUnique();m.Entity<ServiceEvent>().HasIndex(x=>x.EventNumber).IsUnique();m.Entity<JobCard>().HasIndex(x=>x.JobCardNumber).IsUnique();}}
