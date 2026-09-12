@@ -22,6 +22,8 @@ public class PmObligation
     public DateTime? DueDate { get; set; }
     public decimal? DueReading { get; set; }
     public string Status { get; set; } = "Upcoming";
+    public DateTime? GeneratedAt { get; set; } = DateTime.UtcNow;
+    public Guid? SupersededById { get; set; }
 }
 
 public class Appointment
@@ -30,9 +32,33 @@ public class Appointment
     public Guid VehicleId { get; set; }
     public Guid? PmObligationId { get; set; }
     public DateTime StartAt { get; set; }
+    public DateTime? EndAt { get; set; }
     public string ServiceCentre { get; set; } = string.Empty;
     public string Bay { get; set; } = string.Empty;
+    public string AppointmentType { get; set; } = "PM";
+    public decimal PlannedHours { get; set; }
     public string Status { get; set; } = "Scheduled";
+}
+
+public class ServiceBay
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string ServiceCentre { get; set; } = string.Empty;
+    public string BayCode { get; set; } = string.Empty;
+    public string BayType { get; set; } = "General";
+    public bool IsActive { get; set; } = true;
+}
+
+public class Technician
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string EmployeeCode { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string ServiceCentre { get; set; } = string.Empty;
+    public string SkillCodes { get; set; } = string.Empty;
+    public bool HvAuthorized { get; set; }
+    public DateTime? HvAuthorizationValidUntil { get; set; }
+    public bool IsActive { get; set; } = true;
 }
 
 public class ServiceEvent
@@ -55,6 +81,7 @@ public class JobCard
     public string JobCardNumber { get; set; } = string.Empty;
     public string Status { get; set; } = "Open";
     public string Bay { get; set; } = string.Empty;
+    public Guid? TechnicianId { get; set; }
     public string Technician { get; set; } = string.Empty;
     public decimal? StandardRepairHours { get; set; }
     public DateTime? StartedAt { get; set; }
@@ -70,6 +97,39 @@ public class WorkItem
     public string Status { get; set; } = "Pending";
     public decimal? StandardRepairHours { get; set; }
     public bool RequiresQc { get; set; } = true;
+    public bool RequiresHvAuthorization { get; set; }
+}
+
+public class ChecklistExecution
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid JobCardId { get; set; }
+    public Guid? WorkItemId { get; set; }
+    public string ChecklistCode { get; set; } = string.Empty;
+    public string ItemCode { get; set; } = string.Empty;
+    public string ItemText { get; set; } = string.Empty;
+    public string Result { get; set; } = "Pending";
+    public string Remarks { get; set; } = string.Empty;
+    public string ExecutedBy { get; set; } = string.Empty;
+    public DateTime? ExecutedAt { get; set; }
+    public bool IsMandatory { get; set; } = true;
+}
+
+public class Defect
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid VehicleId { get; set; }
+    public Guid JobCardId { get; set; }
+    public Guid? WorkItemId { get; set; }
+    public string DefectNumber { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string Severity { get; set; } = "Minor";
+    public string Description { get; set; } = string.Empty;
+    public string Disposition { get; set; } = "Open";
+    public string FailureCode { get; set; } = string.Empty;
+    public string RcaSummary { get; set; } = string.Empty;
+    public DateTime ReportedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ClosedAt { get; set; }
 }
 
 public class Breakdown
@@ -100,6 +160,7 @@ public class PartTransaction
     public string SerialNumber { get; set; } = string.Empty;
     public bool WarrantyCandidate { get; set; }
     public string FailedPartDisposition { get; set; } = string.Empty;
+    public string AuthorizationStatus { get; set; } = "Not Required";
     public DateTime TransactionAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -108,6 +169,7 @@ public class LabourEntry
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid JobCardId { get; set; }
     public Guid? WorkItemId { get; set; }
+    public Guid? TechnicianId { get; set; }
     public string Technician { get; set; } = string.Empty;
     public DateTime StartAt { get; set; }
     public DateTime? EndAt { get; set; }
@@ -121,6 +183,8 @@ public class QcInspection
     public Guid JobCardId { get; set; }
     public string Inspector { get; set; } = string.Empty;
     public string Result { get; set; } = "Pending";
+    public bool RoadTestRequired { get; set; }
+    public bool RoadTestPassed { get; set; }
     public string Remarks { get; set; } = string.Empty;
     public DateTime? InspectedAt { get; set; }
 }
@@ -148,4 +212,79 @@ public class VehicleAvailabilityLedger
     public Guid? SourceServiceEventId { get; set; }
     public Guid? SourceBreakdownId { get; set; }
     public string ChangedBy { get; set; } = "System";
+    public string RuleVersion { get; set; } = "AVL-1.0";
+    public Guid? CorrectsLedgerId { get; set; }
+}
+
+public class OffHireRecord
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid VehicleId { get; set; }
+    public DateTime StartAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ExpectedReturnAt { get; set; }
+    public DateTime? EndAt { get; set; }
+    public string ReasonCode { get; set; } = string.Empty;
+    public string EvidenceReference { get; set; } = string.Empty;
+    public string RequestedBy { get; set; } = string.Empty;
+    public string ApprovedBy { get; set; } = string.Empty;
+    public string Status { get; set; } = "Pending Approval";
+}
+
+public class RecommissioningInspection
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid OffHireRecordId { get; set; }
+    public Guid VehicleId { get; set; }
+    public string Inspector { get; set; } = string.Empty;
+    public string Result { get; set; } = "Pending";
+    public string Remarks { get; set; } = string.Empty;
+    public DateTime? InspectedAt { get; set; }
+}
+
+public class RepeatFailureMatch
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid VehicleId { get; set; }
+    public Guid SourceServiceEventId { get; set; }
+    public Guid RepeatServiceEventId { get; set; }
+    public string MatchKey { get; set; } = string.Empty;
+    public int WindowDays { get; set; } = 30;
+    public bool IsRepeat { get; set; }
+    public DateTime EvaluatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class FirstTimeFixResult
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid ServiceEventId { get; set; }
+    public Guid VehicleId { get; set; }
+    public bool Eligible { get; set; } = true;
+    public bool Passed { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public DateTime EvaluatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class ApprovalRecord
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string EntityType { get; set; } = string.Empty;
+    public Guid EntityId { get; set; }
+    public string Action { get; set; } = string.Empty;
+    public string RequestedBy { get; set; } = string.Empty;
+    public string ApprovedBy { get; set; } = string.Empty;
+    public string Status { get; set; } = "Pending";
+    public DateTime RequestedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ApprovedAt { get; set; }
+}
+
+public class AuditEvent
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public DateTime OccurredAt { get; set; } = DateTime.UtcNow;
+    public string UserName { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string EntityType { get; set; } = string.Empty;
+    public Guid? EntityId { get; set; }
+    public string CorrelationId { get; set; } = string.Empty;
+    public string Details { get; set; } = string.Empty;
 }
