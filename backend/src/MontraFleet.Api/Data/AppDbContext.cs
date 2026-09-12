@@ -27,6 +27,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<FirstTimeFixResult> FirstTimeFixResults => Set<FirstTimeFixResult>();
     public DbSet<ApprovalRecord> ApprovalRecords => Set<ApprovalRecord>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<SlaClock> SlaClocks => Set<SlaClock>();
+    public DbSet<WarrantyEntitlement> WarrantyEntitlements => Set<WarrantyEntitlement>();
+    public DbSet<Campaign> Campaigns => Set<Campaign>();
+    public DbSet<VehicleCampaign> VehicleCampaigns => Set<VehicleCampaign>();
+    public DbSet<VehicleDocument> VehicleDocuments => Set<VehicleDocument>();
+    public DbSet<IntegrationOutbox> IntegrationOutbox => Set<IntegrationOutbox>();
 
     protected override void OnModelCreating(ModelBuilder m)
     {
@@ -42,5 +48,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         m.Entity<PartTransaction>().Property(x => x.Quantity).HasPrecision(18, 3);
         m.Entity<LabourEntry>().Property(x => x.Hours).HasPrecision(18, 2);
         m.Entity<Appointment>().Property(x => x.PlannedHours).HasPrecision(18, 2);
+        m.Entity<WarrantyEntitlement>().Property(x => x.OdometerLimitKm).HasPrecision(18, 2);
+        m.Entity<Campaign>().HasIndex(x => x.CampaignCode).IsUnique();
+        m.Entity<VehicleCampaign>().HasIndex(x => new { x.VehicleId, x.CampaignId }).IsUnique();
+        m.Entity<VehicleDocument>().HasIndex(x => new { x.VehicleId, x.DocumentType, x.UploadedAt });
+        m.Entity<IntegrationOutbox>().HasIndex(x => new { x.Status, x.CreatedAt });
     }
 }

@@ -1,0 +1,3 @@
+import { Component, OnInit } from '@angular/core';import { CommonModule } from '@angular/common';import { HttpClient } from '@angular/common/http';
+@Component({selector:'app-campaigns',standalone:true,imports:[CommonModule],template:`<section class="page"><h2>Campaigns & Recalls</h2><div class="cards"><div class="card" *ngFor="let x of rows"><h3>{{x.code}}</h3><b>{{x.title}}</b><p>{{x.type}}</p><p>Affected {{x.affected}} · Completed {{x.completed}} · Open {{x.open}}</p></div></div></section>`,styles:[`.page{padding:26px}.cards{display:grid;grid-template-columns:1fr 1fr;gap:14px}`]})
+export class CampaignsComponent implements OnInit{rows:any[]=[];constructor(private http:HttpClient){}ngOnInit(){this.http.get<any[]>('/api/campaigns/open').subscribe(x=>this.rows=x)}}
