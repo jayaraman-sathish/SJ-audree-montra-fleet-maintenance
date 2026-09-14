@@ -198,7 +198,7 @@ app.MapGet("/api/job-cards", async (AppDbContext db) =>
                       join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
                       join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
                       orderby j.StartedAt descending
-                      select new { j.Id,j.JobCardNumber,j.Status,j.Bay,j.Technician,j.TechnicianId,j.StartedAt,j.CompletedAt,e.ServiceEventId,e.EventNumber,vehicle=v.RegistrationNumber }).ToListAsync();
+                      select new { j.Id,j.JobCardNumber,j.Status,j.Bay,j.Technician,j.TechnicianId,j.StartedAt,j.CompletedAt,serviceEventId=e.Id,e.EventNumber,vehicle=v.RegistrationNumber }).ToListAsync();
     return Results.Ok(rows);
 });
 
