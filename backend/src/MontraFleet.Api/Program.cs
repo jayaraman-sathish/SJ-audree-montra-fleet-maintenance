@@ -183,11 +183,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.5.2" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.5.3" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.5.2" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.5.3" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -195,7 +195,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.5.2" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.5.3" });
 });
 
 app.MapGet("/api/dashboard/summary", async (AppDbContext db) =>
@@ -481,11 +481,20 @@ app.MapGet("/api/parts/stock", async (AppDbContext db) =>
 app.MapPost("/api/parts/receive", async (StockMovementRequest r, AppDbContext db) =>
 {
     if(r.Quantity<=0)return Results.BadRequest(new{message="Quantity must be greater than zero."});
-    var p=await db.PartMasters.FindAsync(r.PartMasterId);var l=await db.InventoryLocations.FindAsync(r.InventoryLocationId);if(p is null||l is null)return Results.BadRequest(new{message="Part or location not found."});
-    var s=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==p.Id&&x.InventoryLocationId==l.Id);if(s is null){s=new PartStock{PartMasterId=p.Id,InventoryLocationId=l.Id};db.PartStocks.Add(s);}
-    s.OnHandQty+=r.Quantity;s.UpdatedAt=DateTime.UtcNow;
-    var tx=new PartTransaction{PartMasterId=p.Id,InventoryLocationId=l.Id,JobCardId=Guid.Empty,PartNumber=p.PartNumber,PartDescription=p.Description,TransactionType="Receipt",Quantity=r.Quantity,PerformedBy=r.User};
-    db.PartTransactions.Add(tx);Audit(db,"RECEIPT","PartStock",s.Id,$"{p.PartNumber} +{r.Quantity}",r.User);await db.SaveChangesAsync();return Results.Ok(s);
+    var p=await db.PartMasters.FindAsync(r.PartMasterId);
+    var l=await db.InventoryLocations.FindAsync(r.InventoryLocationId);
+    if(p is null||l is null)return Results.BadRequest(new{message="Part or location not found."});
+    var stock=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==p.Id&&x.InventoryLocationId==l.Id);
+    if(stock is null){stock=new PartStock{PartMasterId=p.Id,InventoryLocationId=l.Id};db.PartStocks.Add(stock);}
+    stock.OnHandQty+=r.Quantity;stock.UpdatedAt=DateTime.UtcNow;
+    var unitCost=p.StandardCost;
+    var tx=new PartTransaction{
+        PartMasterId=p.Id,InventoryLocationId=l.Id,JobCardId=Guid.Empty,PartNumber=p.PartNumber,PartDescription=p.Description,
+        TransactionType="Receipt",Quantity=r.Quantity,PerformedBy=r.User,UnitCost=unitCost,ExtendedCost=Math.Round(r.Quantity*unitCost,2)
+    };
+    db.PartTransactions.Add(tx);
+    Audit(db,"RECEIPT","PartStock",stock.Id,$"{p.PartNumber} +{r.Quantity} @ {unitCost}",r.User);
+    await db.SaveChangesAsync();return Results.Ok(stock);
 });
 app.MapGet("/api/part-requests", async (Guid? jobCardId, AppDbContext db) =>
 {
@@ -510,30 +519,79 @@ app.MapPost("/api/part-requests", async (PartRequestCreate r, AppDbContext db) =
 });
 app.MapPost("/api/part-requests/{id:guid}/reserve", async (Guid id, QuantityAction r, AppDbContext db) =>
 {
-    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();var p=await db.PartMasters.FindAsync(pr.PartMasterId);var s=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==pr.PartMasterId&&x.InventoryLocationId==pr.InventoryLocationId);
-    var qty=r.Quantity<=0?pr.QuantityRequired-pr.QuantityReserved:r.Quantity;if(qty<=0)return Results.BadRequest(new{message="Nothing to reserve."});if(s is null||s.OnHandQty-s.ReservedQty<qty)return Results.Conflict(new{message="Insufficient available stock. Receive/replenish stock first."});
-    s.ReservedQty+=qty;pr.QuantityReserved+=qty;pr.Status=pr.QuantityReserved>=pr.QuantityRequired?"Reserved":"Partially Reserved";pr.UpdatedAt=DateTime.UtcNow;
-    db.PartTransactions.Add(new PartTransaction{PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Reserve",Quantity=qty,PerformedBy=r.User});
+    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();
+    var p=await db.PartMasters.FindAsync(pr.PartMasterId);
+    var stock=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==pr.PartMasterId&&x.InventoryLocationId==pr.InventoryLocationId);
+    var qty=r.Quantity<=0?pr.QuantityRequired-pr.QuantityReserved:r.Quantity;
+    if(qty<=0)return Results.BadRequest(new{message="Nothing to reserve."});
+    if(stock is null||stock.OnHandQty-stock.ReservedQty<qty)return Results.Conflict(new{message="Insufficient available stock. Receive/replenish stock first."});
+    stock.ReservedQty+=qty;pr.QuantityReserved+=qty;pr.Status=pr.QuantityReserved>=pr.QuantityRequired?"Reserved":"Partially Reserved";pr.UpdatedAt=DateTime.UtcNow;
+    db.PartTransactions.Add(new PartTransaction{
+        PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,
+        PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Reserve",Quantity=qty,PerformedBy=r.User,UnitCost=p.StandardCost,ExtendedCost=0
+    });
     Audit(db,"RESERVE","PartRequest",pr.Id,$"{p.PartNumber} x {qty}",r.User);await db.SaveChangesAsync();return Results.Ok(pr);
 });
+
 app.MapPost("/api/part-requests/{id:guid}/issue", async (Guid id, QuantityAction r, AppDbContext db) =>
 {
-    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();var p=await db.PartMasters.FindAsync(pr.PartMasterId);var s=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==pr.PartMasterId&&x.InventoryLocationId==pr.InventoryLocationId);if(s is null)return Results.Conflict(new{message="No stock record."});
-    var remaining=pr.QuantityRequired-pr.QuantityIssued;var qty=r.Quantity<=0?remaining:r.Quantity;if(qty<=0||qty>remaining)return Results.BadRequest(new{message="Invalid issue quantity."});if(pr.QuantityReserved-pr.QuantityIssued<qty)return Results.Conflict(new{message="Reserve the quantity before issue."});if(s.OnHandQty<qty)return Results.Conflict(new{message="Insufficient on-hand stock."});
-    s.OnHandQty-=qty;s.ReservedQty=Math.Max(0,s.ReservedQty-qty);pr.QuantityIssued+=qty;pr.Status=pr.QuantityIssued>=pr.QuantityRequired?"Issued":"Partially Issued";pr.UpdatedAt=DateTime.UtcNow;
-    db.PartTransactions.Add(new PartTransaction{PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Issue",Quantity=qty,PerformedBy=r.User});
-    Audit(db,"ISSUE","PartRequest",pr.Id,$"{p.PartNumber} x {qty}",r.User);await db.SaveChangesAsync();return Results.Ok(pr);
+    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();
+    var p=await db.PartMasters.FindAsync(pr.PartMasterId);
+    var stock=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==pr.PartMasterId&&x.InventoryLocationId==pr.InventoryLocationId);
+    if(stock is null)return Results.Conflict(new{message="No stock record."});
+    var remaining=pr.QuantityRequired-pr.QuantityIssued;var qty=r.Quantity<=0?remaining:r.Quantity;
+    if(qty<=0||qty>remaining)return Results.BadRequest(new{message="Invalid issue quantity."});
+    if(pr.QuantityReserved-pr.QuantityIssued<qty)return Results.Conflict(new{message="Reserve the quantity before issue."});
+    if(stock.OnHandQty<qty)return Results.Conflict(new{message="Insufficient on-hand stock."});
+    stock.OnHandQty-=qty;stock.ReservedQty=Math.Max(0,stock.ReservedQty-qty);stock.UpdatedAt=DateTime.UtcNow;
+    pr.QuantityIssued+=qty;pr.Status=pr.QuantityIssued>=pr.QuantityRequired?"Issued":"Partially Issued";pr.UpdatedAt=DateTime.UtcNow;
+    var unitCost=p?.StandardCost??0;
+    db.PartTransactions.Add(new PartTransaction{
+        PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,
+        PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Issue",Quantity=qty,PerformedBy=r.User,
+        UnitCost=unitCost,ExtendedCost=Math.Round(qty*unitCost,2)
+    });
+    Audit(db,"ISSUE","PartRequest",pr.Id,$"{p.PartNumber} x {qty} @ {unitCost}",r.User);await db.SaveChangesAsync();return Results.Ok(pr);
 });
+
 app.MapPost("/api/part-requests/{id:guid}/return", async (Guid id, QuantityAction r, AppDbContext db) =>
 {
-    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();var p=await db.PartMasters.FindAsync(pr.PartMasterId);var s=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==pr.PartMasterId&&x.InventoryLocationId==pr.InventoryLocationId);if(s is null)return Results.Conflict();
-    var availableToReturn=pr.QuantityIssued-pr.QuantityReturned-pr.QuantityConsumed;var qty=r.Quantity<=0?availableToReturn:r.Quantity;if(qty<=0||qty>availableToReturn)return Results.BadRequest(new{message="Invalid return quantity."});s.OnHandQty+=qty;pr.QuantityReturned+=qty;pr.Status=(pr.QuantityReturned+pr.QuantityConsumed)>=pr.QuantityIssued?"Returned":"Partially Returned";pr.UpdatedAt=DateTime.UtcNow;
-    db.PartTransactions.Add(new PartTransaction{PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Return",Quantity=qty,PerformedBy=r.User});Audit(db,"RETURN","PartRequest",pr.Id,$"{p.PartNumber} x {qty}",r.User);await db.SaveChangesAsync();return Results.Ok(pr);
+    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();
+    var p=await db.PartMasters.FindAsync(pr.PartMasterId);
+    var stock=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==pr.PartMasterId&&x.InventoryLocationId==pr.InventoryLocationId);
+    if(stock is null)return Results.Conflict(new{message="No stock record."});
+    var availableToReturn=pr.QuantityIssued-pr.QuantityReturned-pr.QuantityConsumed;var qty=r.Quantity<=0?availableToReturn:r.Quantity;
+    if(qty<=0||qty>availableToReturn)return Results.BadRequest(new{message="Invalid return quantity."});
+    var issueUnitCost=await db.PartTransactions.AsNoTracking()
+        .Where(x=>x.PartRequestId==pr.Id&&x.TransactionType=="Issue")
+        .OrderByDescending(x=>x.TransactionAt).Select(x=>(decimal?)x.UnitCost).FirstOrDefaultAsync() ?? (p?.StandardCost??0);
+    stock.OnHandQty+=qty;stock.UpdatedAt=DateTime.UtcNow;pr.QuantityReturned+=qty;
+    pr.Status=(pr.QuantityReturned+pr.QuantityConsumed)>=pr.QuantityIssued?"Returned":"Partially Returned";pr.UpdatedAt=DateTime.UtcNow;
+    db.PartTransactions.Add(new PartTransaction{
+        PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,
+        PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Return",Quantity=qty,PerformedBy=r.User,
+        UnitCost=issueUnitCost,ExtendedCost=-Math.Round(qty*issueUnitCost,2)
+    });
+    Audit(db,"RETURN","PartRequest",pr.Id,$"{p.PartNumber} x {qty} @ {issueUnitCost}",r.User);await db.SaveChangesAsync();return Results.Ok(pr);
 });
+
 app.MapPost("/api/part-requests/{id:guid}/consume", async (Guid id, QuantityAction r, AppDbContext db) =>
 {
-    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();var p=await db.PartMasters.FindAsync(pr.PartMasterId);var available=pr.QuantityIssued-pr.QuantityReturned-pr.QuantityConsumed;var qty=r.Quantity<=0?available:r.Quantity;if(qty<=0||qty>available)return Results.BadRequest(new{message="Invalid consume quantity."});pr.QuantityConsumed+=qty;pr.Status=(pr.QuantityReturned+pr.QuantityConsumed)>=pr.QuantityIssued&&pr.QuantityIssued>=pr.QuantityRequired?"Consumed":"Partially Consumed";pr.UpdatedAt=DateTime.UtcNow;
-    db.PartTransactions.Add(new PartTransaction{PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Consume",Quantity=qty,PerformedBy=r.User});Audit(db,"CONSUME","PartRequest",pr.Id,$"{p.PartNumber} x {qty}",r.User);await db.SaveChangesAsync();return Results.Ok(pr);
+    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();
+    var p=await db.PartMasters.FindAsync(pr.PartMasterId);
+    var available=pr.QuantityIssued-pr.QuantityReturned-pr.QuantityConsumed;var qty=r.Quantity<=0?available:r.Quantity;
+    if(qty<=0||qty>available)return Results.BadRequest(new{message="Invalid consume quantity."});
+    var issueUnitCost=await db.PartTransactions.AsNoTracking()
+        .Where(x=>x.PartRequestId==pr.Id&&x.TransactionType=="Issue")
+        .OrderByDescending(x=>x.TransactionAt).Select(x=>(decimal?)x.UnitCost).FirstOrDefaultAsync() ?? (p?.StandardCost??0);
+    pr.QuantityConsumed+=qty;
+    pr.Status=(pr.QuantityReturned+pr.QuantityConsumed)>=pr.QuantityIssued&&pr.QuantityIssued>=pr.QuantityRequired?"Consumed":"Partially Consumed";pr.UpdatedAt=DateTime.UtcNow;
+    db.PartTransactions.Add(new PartTransaction{
+        PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,
+        PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Consume",Quantity=qty,PerformedBy=r.User,
+        UnitCost=issueUnitCost,ExtendedCost=0
+    });
+    Audit(db,"CONSUME","PartRequest",pr.Id,$"{p.PartNumber} x {qty}",r.User);await db.SaveChangesAsync();return Results.Ok(pr);
 });
 app.MapGet("/api/parts/transactions", async (AppDbContext db) => Results.Ok(await db.PartTransactions.AsNoTracking().OrderByDescending(x=>x.TransactionAt).Take(500).ToListAsync()));
 app.MapGet("/api/parts", async (AppDbContext db) => Results.Ok(await db.PartTransactions.AsNoTracking().OrderByDescending(x=>x.TransactionAt).Take(200).ToListAsync()));
@@ -839,16 +897,24 @@ app.MapPost("/api/work-orders/{jobCardId:guid}/tasks/from-master/{masterId:guid}
 
 app.MapGet("/api/work-orders/{jobCardId:guid}/costs", async (Guid jobCardId,AppDbContext db)=>
 {
-    var parts=await db.PartTransactions.Where(x=>x.JobCardId==jobCardId&&x.TransactionType=="Issue").SumAsync(x=>(decimal?)x.ExtendedCost)??0;
+    var parts=await db.PartTransactions.Where(x=>x.JobCardId==jobCardId&&(x.TransactionType=="Issue"||x.TransactionType=="Return"))
+        .SumAsync(x=>(decimal?)x.ExtendedCost)??0;
     var labour=await db.LabourEntries.Where(x=>x.JobCardId==jobCardId).SumAsync(x=>(decimal?)x.CostAmount)??0;
-    var extras=await db.WorkOrderCosts.Where(x=>x.JobCardId==jobCardId).ToListAsync();var external=extras.Where(x=>x.CostType=="External").Sum(x=>x.Amount);var other=extras.Where(x=>x.CostType!="External").Sum(x=>x.Amount);
-    return Results.Ok(new{parts,labour,external,other,total=parts+labour+external+other,entries=extras});
+    var entries=await db.WorkOrderCosts.AsNoTracking().Where(x=>x.JobCardId==jobCardId).OrderByDescending(x=>x.PostedAt).ToListAsync();
+    var external=entries.Where(x=>x.CostType=="External").Sum(x=>x.Amount);
+    var other=entries.Where(x=>x.CostType=="Other").Sum(x=>x.Amount);
+    return Results.Ok(new{parts,labour,external,other,total=parts+labour+external+other,entries});
 });
 app.MapPost("/api/work-orders/{jobCardId:guid}/costs", async (Guid jobCardId,WorkOrderCostCreate r,AppDbContext db)=>
 {
-    if(!await db.JobCards.AnyAsync(x=>x.Id==jobCardId))return Results.NotFound();var x=new WorkOrderCost{JobCardId=jobCardId,WorkItemId=r.WorkItemId,CostType=r.CostType,Description=r.Description,Amount=r.Amount,VendorReference=r.VendorReference,PostedBy=r.PostedBy};db.WorkOrderCosts.Add(x);Audit(db,"CREATE","WorkOrderCost",x.Id,$"{r.CostType}:{r.Amount}",r.PostedBy);await db.SaveChangesAsync();return Results.Ok(x);
+    if(!await db.JobCards.AnyAsync(x=>x.Id==jobCardId))return Results.NotFound();
+    if(r.Amount<=0)return Results.BadRequest(new{message="Cost amount must be greater than zero."});
+    var costType=r.CostType=="External"?"External":"Other";
+    var x=new WorkOrderCost{JobCardId=jobCardId,WorkItemId=r.WorkItemId,CostType=costType,Description=r.Description,
+        Amount=Math.Round(r.Amount,2),VendorReference=r.VendorReference,PostedBy=r.PostedBy};
+    db.WorkOrderCosts.Add(x);Audit(db,"CREATE","WorkOrderCost",x.Id,$"{costType}:{x.Amount}",r.PostedBy);
+    await db.SaveChangesAsync();return Results.Ok(x);
 });
-
 app.MapGet("/api/analytics/maintenance", async (AppDbContext db)=>
 {
     var vehicles=await db.Vehicles.AsNoTracking().ToListAsync();var vehicleCount=vehicles.Count;
@@ -856,17 +922,17 @@ app.MapGet("/api/analytics/maintenance", async (AppDbContext db)=>
     var closed=await db.ServiceEvents.AsNoTracking().Where(x=>x.ClosedAt!=null).ToListAsync();var mttr=closed.Count==0?0:Math.Round(closed.Average(x=>(x.ClosedAt!.Value-x.OpenedAt).TotalHours),1);
     var ftf=await db.FirstTimeFixResults.AsNoTracking().Where(x=>x.Eligible).ToListAsync();var ftfPct=ftf.Count==0?100:Math.Round(ftf.Count(x=>x.Passed)*100.0/ftf.Count,1);
     var repeat=await db.RepeatFailureMatches.CountAsync(x=>x.IsRepeat);var avail=vehicles.Count(x=>x.Status=="Available");
-    var partCost=await db.PartTransactions.Where(x=>x.TransactionType=="Issue").SumAsync(x=>(decimal?)x.ExtendedCost)??0;
+    var partCost=await db.PartTransactions.Where(x=>x.TransactionType=="Issue"||x.TransactionType=="Return").SumAsync(x=>(decimal?)x.ExtendedCost)??0;
     var labourCost=await db.LabourEntries.SumAsync(x=>(decimal?)x.CostAmount)??0;
     var externalCost=await db.WorkOrderCosts.Where(x=>x.CostType=="External").SumAsync(x=>(decimal?)x.Amount)??0;
     var otherCost=await db.WorkOrderCosts.Where(x=>x.CostType!="External").SumAsync(x=>(decimal?)x.Amount)??0;
     var totalCost=partCost+labourCost+externalCost+otherCost;var odo=vehicles.Sum(x=>x.OdometerKm);
     var tasks=await db.WorkItems.AsNoTracking().ToListAsync();var completedTasks=tasks.Count(x=>x.Status=="Completed");
-    var topParts=await db.PartTransactions.AsNoTracking().Where(x=>x.TransactionType=="Issue").GroupBy(x=>new{x.PartNumber,x.PartDescription})
+    var topParts=await db.PartTransactions.AsNoTracking().Where(x=>x.TransactionType=="Issue"||x.TransactionType=="Return").GroupBy(x=>new{x.PartNumber,x.PartDescription})
         .Select(g=>new{g.Key.PartNumber,g.Key.PartDescription,quantity=g.Sum(x=>x.Quantity),cost=g.Sum(x=>x.ExtendedCost)}).OrderByDescending(x=>x.cost).Take(10).ToListAsync();
     var topVehicles=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
                            join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
-                           let parts=db.PartTransactions.Where(x=>x.JobCardId==j.Id).Sum(x=>(decimal?)x.ExtendedCost)??0
+                           let parts=db.PartTransactions.Where(x=>x.JobCardId==j.Id&&(x.TransactionType=="Issue"||x.TransactionType=="Return")).Sum(x=>(decimal?)x.ExtendedCost)??0
                            let labour=db.LabourEntries.Where(x=>x.JobCardId==j.Id).Sum(x=>(decimal?)x.CostAmount)??0
                            let extra=db.WorkOrderCosts.Where(x=>x.JobCardId==j.Id).Sum(x=>(decimal?)x.Amount)??0
                            group new{parts,labour,extra} by new{v.Id,v.RegistrationNumber} into g
