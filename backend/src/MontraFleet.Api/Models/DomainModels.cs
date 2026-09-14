@@ -29,15 +29,24 @@ public class PmObligation
 public class Appointment
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public string AppointmentNumber { get; set; } = string.Empty;
     public Guid VehicleId { get; set; }
     public Guid? PmObligationId { get; set; }
+    public string SourceType { get; set; } = "Manual";
+    public string SourceReference { get; set; } = string.Empty;
     public DateTime StartAt { get; set; }
     public DateTime? EndAt { get; set; }
     public string ServiceCentre { get; set; } = string.Empty;
     public string Bay { get; set; } = string.Empty;
+    public Guid? TechnicianId { get; set; }
+    public string Technician { get; set; } = string.Empty;
     public string AppointmentType { get; set; } = "PM";
+    public string Priority { get; set; } = "P3";
+    public string Reason { get; set; } = string.Empty;
     public decimal PlannedHours { get; set; }
-    public string Status { get; set; } = "Scheduled";
+    public string Status { get; set; } = "Requested";
+    public string CreatedBy { get; set; } = "Service User";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class ServiceBay
@@ -92,9 +101,21 @@ public class WorkItem
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid JobCardId { get; set; }
+    public string TaskCode { get; set; } = string.Empty;
     public string WorkType { get; set; } = "Repair";
     public string Description { get; set; } = string.Empty;
-    public string Status { get; set; } = "Pending";
+    public string Status { get; set; } = "Not Started";
+    public Guid? AssignedToTechnicianId { get; set; }
+    public string AssignedTo { get; set; } = string.Empty;
+    public DateTime? PlannedStartAt { get; set; }
+    public DateTime? DueAt { get; set; }
+    public string Priority { get; set; } = "P3";
+    public Guid? DependencyTaskId { get; set; }
+    public decimal? EstimatedHours { get; set; }
+    public decimal? ActualHours { get; set; }
+    public string EvidenceReference { get; set; } = string.Empty;
+    public string CompletionRemarks { get; set; } = string.Empty;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public decimal? StandardRepairHours { get; set; }
     public bool RequiresQc { get; set; } = true;
     public bool RequiresHvAuthorization { get; set; }

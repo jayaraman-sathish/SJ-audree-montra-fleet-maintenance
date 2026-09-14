@@ -3,6 +3,8 @@ import { DashboardComponent } from './features/dashboard/dashboard.component';
 import { VehicleComponent } from './features/vehicle/vehicle.component';
 import { PmComponent } from './features/pm/pm.component';
 import { ServiceComponent } from './features/service/service.component';
+import { ServiceWorkspaceComponent } from './features/service-workspace/service-workspace.component';
+import { TasksComponent } from './features/tasks/tasks.component';
 import { BreakdownComponent } from './features/breakdown/breakdown.component';
 import { JobCardComponent } from './features/job-card/job-card.component';
 import { PartsComponent } from './features/parts/parts.component';
@@ -20,4 +22,4 @@ import { CampaignsComponent } from './features/campaigns/campaigns.component';
 import { DocumentsComponent } from './features/documents/documents.component';
 import { SearchComponent } from './features/search/search.component';
 export const routes: Routes=[
-{path:'',component:DashboardComponent},{path:'search',component:SearchComponent},{path:'vehicle',component:VehicleComponent},{path:'pm',component:PmComponent},{path:'appointments',component:AppointmentsComponent},{path:'technicians',component:TechniciansComponent},{path:'service',component:ServiceComponent},{path:'breakdown',component:BreakdownComponent},{path:'job-card',component:JobCardComponent},{path:'checklist',component:ChecklistComponent},{path:'parts',component:PartsComponent},{path:'warranty',component:WarrantyComponent},{path:'campaigns',component:CampaignsComponent},{path:'documents',component:DocumentsComponent},{path:'sla',component:SlaComponent},{path:'release',component:ReleaseComponent},{path:'availability',component:AvailabilityComponent},{path:'offhire',component:OffhireComponent},{path:'quality',component:QualityComponent},{path:'audit',component:AuditComponent},{path:'**',redirectTo:''}];
+{path:'',component:DashboardComponent},{path:'search',component:SearchComponent},{path:'vehicle',component:VehicleComponent},{path:'pm',component:PmComponent},{path:'appointments',component:AppointmentsComponent},{path:'technicians',component:TechniciansComponent},{path:'service',component:ServiceComponent},{path:'service-workspace/:id',component:ServiceWorkspaceComponent},{path:'tasks',component:TasksComponent},{path:'breakdown',component:BreakdownComponent},{path:'job-card',component:JobCardComponent},{path:'checklist',component:ChecklistComponent},{path:'parts',component:PartsComponent},{path:'warranty',component:WarrantyComponent},{path:'campaigns',component:CampaignsComponent},{path:'documents',component:DocumentsComponent},{path:'sla',component:SlaComponent},{path:'release',component:ReleaseComponent},{path:'availability',component:AvailabilityComponent},{path:'offhire',component:OffhireComponent},{path:'quality',component:QualityComponent},{path:'audit',component:AuditComponent},{path:'**',redirectTo:''}];
