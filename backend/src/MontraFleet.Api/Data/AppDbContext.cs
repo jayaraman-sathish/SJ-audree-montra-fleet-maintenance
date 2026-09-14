@@ -51,6 +51,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         m.Entity<Defect>().HasIndex(x => x.DefectNumber).IsUnique();
         m.Entity<ServiceBay>().HasIndex(x => new { x.ServiceCentre, x.BayCode }).IsUnique();
         m.Entity<Technician>().HasIndex(x => x.EmployeeCode).IsUnique();
+        m.Entity<Technician>().Property(x => x.HourlyRate).HasPrecision(18, 2);
         m.Entity<VehicleAvailabilityLedger>().HasIndex(x => new { x.VehicleId, x.StartAt });
         m.Entity<RepeatFailureMatch>().HasIndex(x => new { x.VehicleId, x.MatchKey, x.EvaluatedAt });
         m.Entity<PartTransaction>().Property(x => x.Quantity).HasPrecision(18, 3);

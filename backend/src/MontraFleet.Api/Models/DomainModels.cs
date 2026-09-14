@@ -67,6 +67,7 @@ public class Technician
     public string SkillCodes { get; set; } = string.Empty;
     public bool HvAuthorized { get; set; }
     public DateTime? HvAuthorizationValidUntil { get; set; }
+    public decimal HourlyRate { get; set; }
     public bool IsActive { get; set; } = true;
 }
 
