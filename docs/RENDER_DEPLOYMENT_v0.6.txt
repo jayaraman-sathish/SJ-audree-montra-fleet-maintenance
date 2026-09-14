@@ -1,0 +1,47 @@
+MONTRA FLEET MAINTENANCE v0.6
+Render Deployment + PostgreSQL Conversion
+
+TARGET ARCHITECTURE
+-------------------
+Browser
+  -> Render Web Service: montra-fleet-app
+       - Angular static UI
+       - ASP.NET Core 8 API
+  -> Render PostgreSQL: montra-fleet-db
+
+WHY ONE WEB SERVICE
+-------------------
+Angular is compiled during the Docker build and copied into ASP.NET Core wwwroot.
+This keeps frontend and API on the same hostname, so no separate API URL or CORS setup is required.
+
+AFTER THIS UPDATE PASSES GITHUB CI
+---------------------------------
+1. Merge the pull request into main.
+2. Open https://dashboard.render.com/
+3. Choose New + -> Blueprint.
+4. Connect/select repository:
+   jayaraman-sathish/SJ-audree-montra-fleet-maintenance
+5. Render reads render.yaml.
+6. Confirm creation of:
+   - montra-fleet-app
+   - montra-fleet-db
+7. Apply / Deploy Blueprint.
+8. Wait for database creation and Docker build.
+9. Open the generated montra-fleet-app.onrender.com URL.
+10. Verify:
+    /api/health
+    Dashboard
+    Vehicle 360
+    PM
+    Service Execution
+    Warranty
+    Campaigns
+    SLA
+
+NOTES
+-----
+- Region is set to Singapore.
+- Free plans are configured for the pilot/demo environment.
+- DATABASE_URL is wired automatically from Render PostgreSQL.
+- PostgreSQL schema is auto-created from EF Core models.
+- SQL Server-specific scripts remain only as historical project artifacts.

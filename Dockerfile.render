@@ -1,0 +1,25 @@
+# Montra Fleet Maintenance - Render single-service build
+# Angular is built first and copied into the ASP.NET Core wwwroot folder.
+FROM node:20-alpine AS frontend-build
+WORKDIR /src/frontend
+COPY frontend/package*.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS backend-build
+WORKDIR /src/backend
+COPY backend/src/MontraFleet.Api/MontraFleet.Api.csproj ./
+RUN dotnet restore MontraFleet.Api.csproj
+COPY backend/src/MontraFleet.Api/ ./
+RUN dotnet publish MontraFleet.Api.csproj -c Release -o /app/publish --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+WORKDIR /app
+COPY --from=backend-build /app/publish .
+COPY --from=frontend-build /src/frontend/dist/montra-fleet-web/browser ./wwwroot
+
+ENV ASPNETCORE_URLS=http://0.0.0.0:10000
+ENV ASPNETCORE_ENVIRONMENT=Production
+EXPOSE 10000
+ENTRYPOINT ["dotnet", "MontraFleet.Api.dll"]

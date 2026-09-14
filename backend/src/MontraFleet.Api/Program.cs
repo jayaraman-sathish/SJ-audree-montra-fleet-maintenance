@@ -1,16 +1,61 @@
 using Microsoft.EntityFrameworkCore;
 using MontraFleet.Api.Data;
 using MontraFleet.Api.Models;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddCors(options => options.AddPolicy("web", policy => policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Server=localhost;Database=MontraFleetMaintenance;Trusted_Connection=True;TrustServerCertificate=True";
-builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlServer(connectionString));
+
+var rawConnection =
+    Environment.GetEnvironmentVariable("DATABASE_URL")
+    ?? builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Database connection is not configured.");
+
+static string NormalizePostgresConnection(string raw)
+{
+    if (!raw.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase)
+        && !raw.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
+        return raw;
+
+    var uri = new Uri(raw);
+    var userInfo = Uri.UnescapeDataString(uri.UserInfo).Split(':', 2);
+    var builder = new NpgsqlConnectionStringBuilder
+    {
+        Host = uri.Host,
+        Port = uri.IsDefaultPort ? 5432 : uri.Port,
+        Username = userInfo[0],
+        Password = userInfo.Length > 1 ? userInfo[1] : string.Empty,
+        Database = uri.AbsolutePath.TrimStart('/'),
+        SslMode = SslMode.Prefer
+    };
+    return builder.ConnectionString;
+}
+
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(NormalizePostgresConnection(rawConnection)));
+
 var app = builder.Build();
-app.UseCors("web");
-if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
+var autoCreate = builder.Configuration.GetValue("Database:AutoCreate", true)
+                 || string.Equals(Environment.GetEnvironmentVariable("AUTO_CREATE_DB"), "true", StringComparison.OrdinalIgnoreCase);
+
+if (autoCreate)
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await db.Database.EnsureCreatedAsync();
+}
+
 app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="0.5" }));
 app.MapGet("/api/dashboard/summary", () => Results.Ok(new { totalVehicles=1248, available=1086, underMaintenance=96, offHire=50, appointmentsToday=18, breakdownRequests=7, pmOverdue=12, slaBreaches=3, firstTimeFix=91.4, uptime30d=96.2 }));
 app.MapGet("/api/pm/obligations", () => Results.Ok(new[]{ new { id="PMO-1001", vehicle="TN12AB1234", plan="PM-5K", trigger="Odometer", remaining="1,480 km", status="Due Soon" }, new { id="PMO-1002", vehicle="KA05EV7782", plan="PM-3M", trigger="Time", remaining="Overdue by 2 days", status="Overdue" }, new { id="PMO-1003", vehicle="TN22EV9088", plan="PM-10K", trigger="Odometer", remaining="7,150 km", status="Upcoming" } }));
@@ -29,4 +74,6 @@ app.MapPost("/api/campaigns", (Campaign x) => Results.Created($"/api/campaigns/{
 app.MapPost("/api/vehicle-campaigns", (VehicleCampaign x) => Results.Created($"/api/vehicle-campaigns/{x.Id}", x));
 app.MapPost("/api/documents", (VehicleDocument x) => Results.Created($"/api/documents/{x.Id}", x));
 app.MapPost("/api/integrations/outbox", (IntegrationOutbox x) => Results.Created($"/api/integrations/outbox/{x.Id}", x));
+
+app.MapFallbackToFile("index.html");
 app.Run();
