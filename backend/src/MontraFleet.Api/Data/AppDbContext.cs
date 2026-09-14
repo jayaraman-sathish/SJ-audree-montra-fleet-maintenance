@@ -48,6 +48,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         m.Entity<PartTransaction>().Property(x => x.Quantity).HasPrecision(18, 3);
         m.Entity<LabourEntry>().Property(x => x.Hours).HasPrecision(18, 2);
         m.Entity<Appointment>().Property(x => x.PlannedHours).HasPrecision(18, 2);
+        m.Entity<Appointment>().HasIndex(x => x.AppointmentNumber).IsUnique();
+        m.Entity<WorkItem>().HasIndex(x => x.TaskCode).IsUnique();
+        m.Entity<WorkItem>().Property(x => x.EstimatedHours).HasPrecision(18, 2);
+        m.Entity<WorkItem>().Property(x => x.ActualHours).HasPrecision(18, 2);
         m.Entity<WarrantyEntitlement>().Property(x => x.OdometerLimitKm).HasPrecision(18, 2);
         m.Entity<Campaign>().HasIndex(x => x.CampaignCode).IsUnique();
         m.Entity<VehicleCampaign>().HasIndex(x => new { x.VehicleId, x.CampaignId }).IsUnique();

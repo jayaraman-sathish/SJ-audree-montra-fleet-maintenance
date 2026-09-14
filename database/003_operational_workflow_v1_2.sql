@@ -1,0 +1,24 @@
+-- AU-Fleet-Ops v1.2 additive schema upgrade
+ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "AppointmentNumber" text NOT NULL DEFAULT '';
+ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "SourceType" text NOT NULL DEFAULT 'Manual';
+ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "SourceReference" text NOT NULL DEFAULT '';
+ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "TechnicianId" uuid NULL;
+ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "Technician" text NOT NULL DEFAULT '';
+ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "Priority" text NOT NULL DEFAULT 'P3';
+ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "Reason" text NOT NULL DEFAULT '';
+ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "CreatedBy" text NOT NULL DEFAULT 'Service User';
+ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "TaskCode" text NOT NULL DEFAULT '';
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "AssignedToTechnicianId" uuid NULL;
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "AssignedTo" text NOT NULL DEFAULT '';
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "PlannedStartAt" timestamptz NULL;
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "DueAt" timestamptz NULL;
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "Priority" text NOT NULL DEFAULT 'P3';
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "DependencyTaskId" uuid NULL;
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "EstimatedHours" numeric(18,2) NULL;
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "ActualHours" numeric(18,2) NULL;
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "EvidenceReference" text NOT NULL DEFAULT '';
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "CompletionRemarks" text NOT NULL DEFAULT '';
+ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP;
+CREATE UNIQUE INDEX IF NOT EXISTS "IX_Appointments_AppointmentNumber" ON "Appointments" ("AppointmentNumber") WHERE "AppointmentNumber" <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS "IX_WorkItems_TaskCode" ON "WorkItems" ("TaskCode") WHERE "TaskCode" <> '';
