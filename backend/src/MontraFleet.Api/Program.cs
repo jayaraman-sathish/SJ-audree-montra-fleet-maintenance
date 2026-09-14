@@ -56,7 +56,7 @@ if (autoCreate)
     await db.Database.EnsureCreatedAsync();
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="0.7" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="0.8" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try
@@ -82,7 +82,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
         status = File.Exists(indexPath) ? "ok" : "missing",
         indexExists = File.Exists(indexPath),
         webRoot,
-        version = "0.7"
+        version = "0.8"
     });
 });
 
