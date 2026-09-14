@@ -70,9 +70,58 @@ using (var scope = app.Services.CreateScope())
 
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_Appointments_AppointmentNumber" ON "Appointments" ("AppointmentNumber") WHERE "AppointmentNumber" <> '';
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_WorkItems_TaskCode" ON "WorkItems" ("TaskCode") WHERE "TaskCode" <> '';
+        CREATE TABLE IF NOT EXISTS "PartMasters" (
+            "Id" uuid PRIMARY KEY, "PartNumber" text NOT NULL, "Description" text NOT NULL DEFAULT '', "Category" text NOT NULL DEFAULT '',
+            "UnitOfMeasure" text NOT NULL DEFAULT 'EA', "ManufacturerPartNumber" text NOT NULL DEFAULT '', "IsSerialized" boolean NOT NULL DEFAULT false,
+            "IsWarrantyReturnable" boolean NOT NULL DEFAULT false, "ReorderLevel" numeric(18,3) NOT NULL DEFAULT 0, "ReorderQuantity" numeric(18,3) NOT NULL DEFAULT 0, "IsActive" boolean NOT NULL DEFAULT true
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartMaster_PartNumber" ON "PartMasters" ("PartNumber");
+        CREATE TABLE IF NOT EXISTS "InventoryLocations" (
+            "Id" uuid PRIMARY KEY, "LocationCode" text NOT NULL, "Name" text NOT NULL DEFAULT '', "ServiceCentre" text NOT NULL DEFAULT '', "Bin" text NOT NULL DEFAULT '', "IsActive" boolean NOT NULL DEFAULT true
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_InventoryLocation_Code" ON "InventoryLocations" ("LocationCode");
+        CREATE TABLE IF NOT EXISTS "PartStocks" (
+            "Id" uuid PRIMARY KEY, "PartMasterId" uuid NOT NULL, "InventoryLocationId" uuid NOT NULL, "OnHandQty" numeric(18,3) NOT NULL DEFAULT 0, "ReservedQty" numeric(18,3) NOT NULL DEFAULT 0, "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartStock_PartLocation" ON "PartStocks" ("PartMasterId","InventoryLocationId");
+        CREATE TABLE IF NOT EXISTS "PartRequests" (
+            "Id" uuid PRIMARY KEY, "RequestNumber" text NOT NULL, "JobCardId" uuid NOT NULL, "WorkItemId" uuid NULL, "PartMasterId" uuid NOT NULL, "InventoryLocationId" uuid NOT NULL,
+            "QuantityRequired" numeric(18,3) NOT NULL DEFAULT 0, "QuantityReserved" numeric(18,3) NOT NULL DEFAULT 0, "QuantityIssued" numeric(18,3) NOT NULL DEFAULT 0,
+            "QuantityReturned" numeric(18,3) NOT NULL DEFAULT 0, "QuantityConsumed" numeric(18,3) NOT NULL DEFAULT 0, "Status" text NOT NULL DEFAULT 'Requested',
+            "WarrantyCandidate" boolean NOT NULL DEFAULT false, "FailedPartDisposition" text NOT NULL DEFAULT '', "RequestedBy" text NOT NULL DEFAULT 'Technician',
+            "RequestedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, "UpdatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartRequest_Number" ON "PartRequests" ("RequestNumber");
+        ALTER TABLE "PartTransactions" ADD COLUMN IF NOT EXISTS "PartRequestId" uuid NULL;
+        ALTER TABLE "PartTransactions" ADD COLUMN IF NOT EXISTS "PartMasterId" uuid NULL;
+        ALTER TABLE "PartTransactions" ADD COLUMN IF NOT EXISTS "InventoryLocationId" uuid NULL;
+        ALTER TABLE "PartTransactions" ADD COLUMN IF NOT EXISTS "PerformedBy" text NOT NULL DEFAULT 'Store User';
+
     """);
 
 
+
+    if (!await db.InventoryLocations.AnyAsync())
+    {
+        db.InventoryLocations.Add(new InventoryLocation { LocationCode="MAIN-STORE", Name="Main Parts Store", ServiceCentre="Chennai Service Centre", Bin="GENERAL" });
+        await db.SaveChangesAsync();
+    }
+    if (!await db.PartMasters.AnyAsync())
+    {
+        db.PartMasters.AddRange(
+            new PartMaster { PartNumber="CL-7T-018", Description="Coolant hose assembly", Category="Cooling", UnitOfMeasure="EA", IsWarrantyReturnable=true, ReorderLevel=2, ReorderQuantity=5 },
+            new PartMaster { PartNumber="FLT-7T-002", Description="Cabin filter", Category="Filter", UnitOfMeasure="EA", ReorderLevel=4, ReorderQuantity=10 },
+            new PartMaster { PartNumber="CLP-7T-007", Description="Hose clamp", Category="Cooling", UnitOfMeasure="EA", ReorderLevel=5, ReorderQuantity=20 }
+        );
+        await db.SaveChangesAsync();
+    }
+    var seedLocation=await db.InventoryLocations.FirstAsync();
+    foreach (var p in await db.PartMasters.ToListAsync())
+    {
+        if (!await db.PartStocks.AnyAsync(x=>x.PartMasterId==p.Id && x.InventoryLocationId==seedLocation.Id))
+            db.PartStocks.Add(new PartStock { PartMasterId=p.Id, InventoryLocationId=seedLocation.Id, OnHandQty=p.PartNumber=="CL-7T-018"?4:p.PartNumber=="FLT-7T-002"?8:12, ReservedQty=0 });
+    }
+    await db.SaveChangesAsync();
     if (!await db.Vehicles.AnyAsync())
     {
         db.Vehicles.AddRange(
@@ -101,11 +150,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.2" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.3" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.2" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.3" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -113,7 +162,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.2" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.3" });
 });
 
 app.MapGet("/api/dashboard/summary", async (AppDbContext db) =>
@@ -359,17 +408,93 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}", async (Guid jobCardId, App
     if(data is null)return Results.NotFound();
     var tasks=await db.WorkItems.CountAsync(x=>x.JobCardId==jobCardId);var completed=await db.WorkItems.CountAsync(x=>x.JobCardId==jobCardId&&x.Status=="Completed");
     var defects=await db.Defects.CountAsync(x=>x.JobCardId==jobCardId&&x.Disposition!="Closed");
-    var parts=await db.PartTransactions.CountAsync(x=>x.JobCardId==jobCardId);var qc=await db.QcInspections.Where(x=>x.JobCardId==jobCardId).OrderByDescending(x=>x.InspectedAt).Select(x=>x.Result).FirstOrDefaultAsync();
+    var parts=await db.PartRequests.CountAsync(x=>x.JobCardId==jobCardId);var qc=await db.QcInspections.Where(x=>x.JobCardId==jobCardId).OrderByDescending(x=>x.InspectedAt).Select(x=>x.Result).FirstOrDefaultAsync();
     return Results.Ok(new{data,tasks,completedTasks=completed,openDefects=defects,partTransactions=parts,qcStatus=qc??"Pending"});
 });
 
-app.MapGet("/api/parts", async (AppDbContext db) => Results.Ok(await db.PartTransactions.AsNoTracking().OrderByDescending(x=>x.TransactionAt).Take(200).ToListAsync()));
-app.MapPost("/api/parts", async (PartTransaction p, AppDbContext db) =>
+app.MapGet("/api/parts/master", async (AppDbContext db) => Results.Ok(await db.PartMasters.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.PartNumber).ToListAsync()));
+app.MapPost("/api/parts/master", async (PartMasterRequest r, AppDbContext db) =>
 {
-    if (!await db.JobCards.AnyAsync(x=>x.Id==p.JobCardId)) return Results.BadRequest(new { message="Job card not found." });
-    p.Id=Guid.NewGuid(); p.TransactionAt=DateTime.UtcNow; db.PartTransactions.Add(p); Audit(db,"CREATE","PartTransaction",p.Id,$"{p.TransactionType} {p.PartNumber} x {p.Quantity}");
-    await db.SaveChangesAsync(); return Results.Created($"/api/parts/{p.Id}", p);
+    if(string.IsNullOrWhiteSpace(r.PartNumber))return Results.BadRequest(new{message="Part number is required."});
+    if(await db.PartMasters.AnyAsync(x=>x.PartNumber==r.PartNumber))return Results.Conflict(new{message="Part number already exists."});
+    var p=new PartMaster{PartNumber=r.PartNumber.Trim(),Description=r.Description,Category=r.Category,UnitOfMeasure=r.UnitOfMeasure,ManufacturerPartNumber=r.ManufacturerPartNumber,
+        IsSerialized=r.IsSerialized,IsWarrantyReturnable=r.IsWarrantyReturnable,ReorderLevel=r.ReorderLevel,ReorderQuantity=r.ReorderQuantity};
+    db.PartMasters.Add(p);Audit(db,"CREATE","PartMaster",p.Id,p.PartNumber);await db.SaveChangesAsync();return Results.Created($"/api/parts/master/{p.Id}",p);
 });
+app.MapGet("/api/parts/locations", async (AppDbContext db) => Results.Ok(await db.InventoryLocations.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.LocationCode).ToListAsync()));
+app.MapPost("/api/parts/locations", async (InventoryLocation r, AppDbContext db) =>
+{
+    if(string.IsNullOrWhiteSpace(r.LocationCode))return Results.BadRequest(new{message="Location code is required."});
+    if(await db.InventoryLocations.AnyAsync(x=>x.LocationCode==r.LocationCode))return Results.Conflict(new{message="Location already exists."});
+    r.Id=Guid.NewGuid();db.InventoryLocations.Add(r);Audit(db,"CREATE","InventoryLocation",r.Id,r.LocationCode);await db.SaveChangesAsync();return Results.Ok(r);
+});
+app.MapGet("/api/parts/stock", async (AppDbContext db) =>
+{
+    var rows=await (from s in db.PartStocks.AsNoTracking() join p in db.PartMasters.AsNoTracking() on s.PartMasterId equals p.Id
+                    join l in db.InventoryLocations.AsNoTracking() on s.InventoryLocationId equals l.Id orderby p.PartNumber
+                    select new{s.Id,s.PartMasterId,p.PartNumber,p.Description,p.Category,p.UnitOfMeasure,s.InventoryLocationId,l.LocationCode,location=l.Name,l.Bin,
+                        s.OnHandQty,s.ReservedQty,availableQty=s.OnHandQty-s.ReservedQty,p.ReorderLevel,p.ReorderQuantity,reorderRequired=(s.OnHandQty-s.ReservedQty)<=p.ReorderLevel,s.UpdatedAt}).ToListAsync();
+    return Results.Ok(rows);
+});
+app.MapPost("/api/parts/receive", async (StockMovementRequest r, AppDbContext db) =>
+{
+    if(r.Quantity<=0)return Results.BadRequest(new{message="Quantity must be greater than zero."});
+    var p=await db.PartMasters.FindAsync(r.PartMasterId);var l=await db.InventoryLocations.FindAsync(r.InventoryLocationId);if(p is null||l is null)return Results.BadRequest(new{message="Part or location not found."});
+    var s=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==p.Id&&x.InventoryLocationId==l.Id);if(s is null){s=new PartStock{PartMasterId=p.Id,InventoryLocationId=l.Id};db.PartStocks.Add(s);}
+    s.OnHandQty+=r.Quantity;s.UpdatedAt=DateTime.UtcNow;
+    var tx=new PartTransaction{PartMasterId=p.Id,InventoryLocationId=l.Id,JobCardId=Guid.Empty,PartNumber=p.PartNumber,PartDescription=p.Description,TransactionType="Receipt",Quantity=r.Quantity,PerformedBy=r.User};
+    db.PartTransactions.Add(tx);Audit(db,"RECEIPT","PartStock",s.Id,$"{p.PartNumber} +{r.Quantity}",r.User);await db.SaveChangesAsync();return Results.Ok(s);
+});
+app.MapGet("/api/part-requests", async (Guid? jobCardId, AppDbContext db) =>
+{
+    var q=db.PartRequests.AsNoTracking().AsQueryable();if(jobCardId.HasValue)q=q.Where(x=>x.JobCardId==jobCardId.Value);
+    var rows=await (from r in q join p in db.PartMasters.AsNoTracking() on r.PartMasterId equals p.Id join l in db.InventoryLocations.AsNoTracking() on r.InventoryLocationId equals l.Id
+                    join j in db.JobCards.AsNoTracking() on r.JobCardId equals j.Id
+                    from t in db.WorkItems.AsNoTracking().Where(x=>x.Id==r.WorkItemId).DefaultIfEmpty()
+                    orderby r.RequestedAt descending select new{r.Id,r.RequestNumber,r.JobCardId,jobCard=j.JobCardNumber,r.WorkItemId,task=t==null?"":t.TaskCode,r.PartMasterId,
+                        p.PartNumber,p.Description,p.UnitOfMeasure,r.InventoryLocationId,l.LocationCode,r.QuantityRequired,r.QuantityReserved,r.QuantityIssued,r.QuantityReturned,r.QuantityConsumed,
+                        r.Status,r.WarrantyCandidate,r.FailedPartDisposition,r.RequestedBy,r.RequestedAt,r.UpdatedAt}).ToListAsync();return Results.Ok(rows);
+});
+app.MapPost("/api/part-requests", async (PartRequestCreate r, AppDbContext db) =>
+{
+    if(r.Quantity<=0)return Results.BadRequest(new{message="Quantity must be greater than zero."});
+    if(!await db.JobCards.AnyAsync(x=>x.Id==r.JobCardId))return Results.BadRequest(new{message="Job card not found."});
+    if(r.WorkItemId.HasValue&&!await db.WorkItems.AnyAsync(x=>x.Id==r.WorkItemId&&x.JobCardId==r.JobCardId))return Results.BadRequest(new{message="Task must belong to the job card."});
+    var p=await db.PartMasters.FindAsync(r.PartMasterId);var l=await db.InventoryLocations.FindAsync(r.InventoryLocationId);if(p is null||l is null)return Results.BadRequest(new{message="Part or location not found."});
+    var s=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==p.Id&&x.InventoryLocationId==l.Id);var available=s==null?0:s.OnHandQty-s.ReservedQty;
+    var pr=new PartRequest{RequestNumber=$"PR-{DateTime.UtcNow:yyyyMMdd}-{(await db.PartRequests.CountAsync()+1):D5}",JobCardId=r.JobCardId,WorkItemId=r.WorkItemId,PartMasterId=p.Id,InventoryLocationId=l.Id,
+        QuantityRequired=r.Quantity,Status=available>=r.Quantity?"Requested":"Awaiting Stock",WarrantyCandidate=r.WarrantyCandidate,FailedPartDisposition=r.FailedPartDisposition,RequestedBy=r.RequestedBy};
+    db.PartRequests.Add(pr);Audit(db,"REQUEST","PartRequest",pr.Id,$"{pr.RequestNumber} {p.PartNumber} x {r.Quantity}",r.RequestedBy);await db.SaveChangesAsync();return Results.Ok(pr);
+});
+app.MapPost("/api/part-requests/{id:guid}/reserve", async (Guid id, QuantityAction r, AppDbContext db) =>
+{
+    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();var p=await db.PartMasters.FindAsync(pr.PartMasterId);var s=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==pr.PartMasterId&&x.InventoryLocationId==pr.InventoryLocationId);
+    var qty=r.Quantity<=0?pr.QuantityRequired-pr.QuantityReserved:r.Quantity;if(qty<=0)return Results.BadRequest(new{message="Nothing to reserve."});if(s is null||s.OnHandQty-s.ReservedQty<qty)return Results.Conflict(new{message="Insufficient available stock. Receive/replenish stock first."});
+    s.ReservedQty+=qty;pr.QuantityReserved+=qty;pr.Status=pr.QuantityReserved>=pr.QuantityRequired?"Reserved":"Partially Reserved";pr.UpdatedAt=DateTime.UtcNow;
+    db.PartTransactions.Add(new PartTransaction{PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Reserve",Quantity=qty,PerformedBy=r.User});
+    Audit(db,"RESERVE","PartRequest",pr.Id,$"{p.PartNumber} x {qty}",r.User);await db.SaveChangesAsync();return Results.Ok(pr);
+});
+app.MapPost("/api/part-requests/{id:guid}/issue", async (Guid id, QuantityAction r, AppDbContext db) =>
+{
+    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();var p=await db.PartMasters.FindAsync(pr.PartMasterId);var s=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==pr.PartMasterId&&x.InventoryLocationId==pr.InventoryLocationId);if(s is null)return Results.Conflict(new{message="No stock record."});
+    var remaining=pr.QuantityRequired-pr.QuantityIssued;var qty=r.Quantity<=0?remaining:r.Quantity;if(qty<=0||qty>remaining)return Results.BadRequest(new{message="Invalid issue quantity."});if(pr.QuantityReserved-pr.QuantityIssued<qty)return Results.Conflict(new{message="Reserve the quantity before issue."});if(s.OnHandQty<qty)return Results.Conflict(new{message="Insufficient on-hand stock."});
+    s.OnHandQty-=qty;s.ReservedQty=Math.Max(0,s.ReservedQty-qty);pr.QuantityIssued+=qty;pr.Status=pr.QuantityIssued>=pr.QuantityRequired?"Issued":"Partially Issued";pr.UpdatedAt=DateTime.UtcNow;
+    db.PartTransactions.Add(new PartTransaction{PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Issue",Quantity=qty,PerformedBy=r.User});
+    Audit(db,"ISSUE","PartRequest",pr.Id,$"{p.PartNumber} x {qty}",r.User);await db.SaveChangesAsync();return Results.Ok(pr);
+});
+app.MapPost("/api/part-requests/{id:guid}/return", async (Guid id, QuantityAction r, AppDbContext db) =>
+{
+    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();var p=await db.PartMasters.FindAsync(pr.PartMasterId);var s=await db.PartStocks.FirstOrDefaultAsync(x=>x.PartMasterId==pr.PartMasterId&&x.InventoryLocationId==pr.InventoryLocationId);if(s is null)return Results.Conflict();
+    var availableToReturn=pr.QuantityIssued-pr.QuantityReturned-pr.QuantityConsumed;var qty=r.Quantity<=0?availableToReturn:r.Quantity;if(qty<=0||qty>availableToReturn)return Results.BadRequest(new{message="Invalid return quantity."});s.OnHandQty+=qty;pr.QuantityReturned+=qty;pr.Status=(pr.QuantityReturned+pr.QuantityConsumed)>=pr.QuantityIssued?"Returned":"Partially Returned";pr.UpdatedAt=DateTime.UtcNow;
+    db.PartTransactions.Add(new PartTransaction{PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Return",Quantity=qty,PerformedBy=r.User});Audit(db,"RETURN","PartRequest",pr.Id,$"{p.PartNumber} x {qty}",r.User);await db.SaveChangesAsync();return Results.Ok(pr);
+});
+app.MapPost("/api/part-requests/{id:guid}/consume", async (Guid id, QuantityAction r, AppDbContext db) =>
+{
+    var pr=await db.PartRequests.FindAsync(id);if(pr is null)return Results.NotFound();var p=await db.PartMasters.FindAsync(pr.PartMasterId);var available=pr.QuantityIssued-pr.QuantityReturned-pr.QuantityConsumed;var qty=r.Quantity<=0?available:r.Quantity;if(qty<=0||qty>available)return Results.BadRequest(new{message="Invalid consume quantity."});pr.QuantityConsumed+=qty;pr.Status=(pr.QuantityReturned+pr.QuantityConsumed)>=pr.QuantityIssued&&pr.QuantityIssued>=pr.QuantityRequired?"Consumed":"Partially Consumed";pr.UpdatedAt=DateTime.UtcNow;
+    db.PartTransactions.Add(new PartTransaction{PartRequestId=pr.Id,PartMasterId=pr.PartMasterId,InventoryLocationId=pr.InventoryLocationId,JobCardId=pr.JobCardId,WorkItemId=pr.WorkItemId,PartNumber=p!.PartNumber,PartDescription=p.Description,TransactionType="Consume",Quantity=qty,PerformedBy=r.User});Audit(db,"CONSUME","PartRequest",pr.Id,$"{p.PartNumber} x {qty}",r.User);await db.SaveChangesAsync();return Results.Ok(pr);
+});
+app.MapGet("/api/parts/transactions", async (AppDbContext db) => Results.Ok(await db.PartTransactions.AsNoTracking().OrderByDescending(x=>x.TransactionAt).Take(500).ToListAsync()));
+app.MapGet("/api/parts", async (AppDbContext db) => Results.Ok(await db.PartTransactions.AsNoTracking().OrderByDescending(x=>x.TransactionAt).Take(200).ToListAsync()));
 
 app.MapPost("/api/labour", async (LabourEntry l, AppDbContext db) =>
 {
@@ -412,6 +537,7 @@ app.MapPost("/api/service-events/{id:guid}/release", async (Guid id, ReleaseRequ
     var e=await db.ServiceEvents.FindAsync(id); if(e is null) return Results.NotFound();
     var j=await db.JobCards.FirstOrDefaultAsync(x=>x.ServiceEventId==id); if(j is null) return Results.BadRequest(new { message="Job card not found." });
     if (await db.WorkItems.AnyAsync(x=>x.JobCardId==j.Id && x.Status!="Completed")) return Results.Conflict(new { message="All work items must be completed before release." });
+    if (await db.PartRequests.AnyAsync(x=>x.JobCardId==j.Id && x.Status!="Consumed" && x.Status!="Returned" && x.Status!="Cancelled")) return Results.Conflict(new { message="Open parts requests must be resolved before release." });
     var latestQc=await db.QcInspections.Where(x=>x.JobCardId==j.Id).OrderByDescending(x=>x.InspectedAt).FirstOrDefaultAsync();
     if (latestQc is null || latestQc.Result!="Pass" || (latestQc.RoadTestRequired && !latestQc.RoadTestPassed))
         return Results.Conflict(new { message="Passing QC is required before release." });
@@ -622,3 +748,8 @@ record TaskRequest(Guid JobCardId,string WorkType,string Description,Guid? Assig
     Guid? DependencyTaskId,decimal? EstimatedHours,bool RequiresQc,bool RequiresHvAuthorization);
 record TaskStatusRequest(string Status,decimal? ActualHours,string? CompletionRemarks,string? EvidenceReference);
 record TaskAssignRequest(Guid TechnicianId);
+
+record PartMasterRequest(string PartNumber,string Description,string Category,string UnitOfMeasure,string ManufacturerPartNumber,bool IsSerialized,bool IsWarrantyReturnable,decimal ReorderLevel,decimal ReorderQuantity);
+record StockMovementRequest(Guid PartMasterId,Guid InventoryLocationId,decimal Quantity,string User);
+record PartRequestCreate(Guid JobCardId,Guid? WorkItemId,Guid PartMasterId,Guid InventoryLocationId,decimal Quantity,bool WarrantyCandidate,string FailedPartDisposition,string RequestedBy);
+record QuantityAction(decimal Quantity,string User);

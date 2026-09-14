@@ -1,0 +1,4 @@
+-- AU-Fleet-Ops v1.3 parts / inventory architecture
+-- Applied automatically by Program.cs at startup.
+-- New persistent entities: PartMasters, InventoryLocations, PartStocks, PartRequests.
+-- Work-order part flow: Request -> Reserve -> Issue -> Consume/Return.
