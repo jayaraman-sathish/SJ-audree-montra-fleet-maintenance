@@ -169,9 +169,68 @@ public class Breakdown
     public DateTime? RestoredAt { get; set; }
 }
 
+public class PartMaster
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string PartNumber { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string UnitOfMeasure { get; set; } = "EA";
+    public string ManufacturerPartNumber { get; set; } = string.Empty;
+    public bool IsSerialized { get; set; }
+    public bool IsWarrantyReturnable { get; set; }
+    public decimal ReorderLevel { get; set; }
+    public decimal ReorderQuantity { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class InventoryLocation
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string LocationCode { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string ServiceCentre { get; set; } = string.Empty;
+    public string Bin { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
+public class PartStock
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid PartMasterId { get; set; }
+    public Guid InventoryLocationId { get; set; }
+    public decimal OnHandQty { get; set; }
+    public decimal ReservedQty { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class PartRequest
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string RequestNumber { get; set; } = string.Empty;
+    public Guid JobCardId { get; set; }
+    public Guid? WorkItemId { get; set; }
+    public Guid PartMasterId { get; set; }
+    public Guid InventoryLocationId { get; set; }
+    public decimal QuantityRequired { get; set; }
+    public decimal QuantityReserved { get; set; }
+    public decimal QuantityIssued { get; set; }
+    public decimal QuantityReturned { get; set; }
+    public decimal QuantityConsumed { get; set; }
+    public string Status { get; set; } = "Requested";
+    public bool WarrantyCandidate { get; set; }
+    public string FailedPartDisposition { get; set; } = string.Empty;
+    public string RequestedBy { get; set; } = "Technician";
+    public DateTime RequestedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class PartTransaction
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid? PartRequestId { get; set; }
+    public Guid? PartMasterId { get; set; }
+    public Guid? InventoryLocationId { get; set; }
     public Guid JobCardId { get; set; }
     public Guid? WorkItemId { get; set; }
     public string PartNumber { get; set; } = string.Empty;
@@ -182,6 +241,7 @@ public class PartTransaction
     public bool WarrantyCandidate { get; set; }
     public string FailedPartDisposition { get; set; } = string.Empty;
     public string AuthorizationStatus { get; set; } = "Not Required";
+    public string PerformedBy { get; set; } = "Store User";
     public DateTime TransactionAt { get; set; } = DateTime.UtcNow;
 }
 
