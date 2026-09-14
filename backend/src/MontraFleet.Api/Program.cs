@@ -56,7 +56,36 @@ if (autoCreate)
     await db.Database.EnsureCreatedAsync();
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="0.5" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="0.7" }));
+app.MapGet("/api/db/health", async (AppDbContext db) =>
+{
+    try
+    {
+        var canConnect = await db.Database.CanConnectAsync();
+        return canConnect
+            ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true })
+            : Results.Problem("Database connection check returned false.", statusCode:503);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            title:"Database connection failed",
+            detail:ex.Message,
+            statusCode:503);
+    }
+});
+app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
+{
+    var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
+    var indexPath = Path.Combine(webRoot, "index.html");
+    return Results.Ok(new {
+        status = File.Exists(indexPath) ? "ok" : "missing",
+        indexExists = File.Exists(indexPath),
+        webRoot,
+        version = "0.7"
+    });
+});
+
 app.MapGet("/api/dashboard/summary", () => Results.Ok(new { totalVehicles=1248, available=1086, underMaintenance=96, offHire=50, appointmentsToday=18, breakdownRequests=7, pmOverdue=12, slaBreaches=3, firstTimeFix=91.4, uptime30d=96.2 }));
 app.MapGet("/api/pm/obligations", () => Results.Ok(new[]{ new { id="PMO-1001", vehicle="TN12AB1234", plan="PM-5K", trigger="Odometer", remaining="1,480 km", status="Due Soon" }, new { id="PMO-1002", vehicle="KA05EV7782", plan="PM-3M", trigger="Time", remaining="Overdue by 2 days", status="Overdue" }, new { id="PMO-1003", vehicle="TN22EV9088", plan="PM-10K", trigger="Odometer", remaining="7,150 km", status="Upcoming" } }));
 app.MapGet("/api/service-events/active", () => Results.Ok(new[]{ new { eventNo="SE-2026-001234", vehicle="TN12AB1234", type="PM Service", status="In Progress", jobCard="JC-2026-00987", bay="Bay-04", technician="Suresh K", sla="01:42 / 04:00" }, new { eventNo="SE-2026-001241", vehicle="KA05EV7782", type="Breakdown", status="Diagnosis", jobCard="JC-2026-00991", bay="HV-01", technician="Meena P", sla="00:58 / 02:00" } }));
@@ -75,5 +104,20 @@ app.MapPost("/api/vehicle-campaigns", (VehicleCampaign x) => Results.Created($"/
 app.MapPost("/api/documents", (VehicleDocument x) => Results.Created($"/api/documents/{x.Id}", x));
 app.MapPost("/api/integrations/outbox", (IntegrationOutbox x) => Results.Created($"/api/integrations/outbox/{x.Id}", x));
 
-app.MapFallbackToFile("index.html");
+app.MapFallback(async context =>
+{
+    var env = context.RequestServices.GetRequiredService<IWebHostEnvironment>();
+    var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
+    var indexPath = Path.Combine(webRoot, "index.html");
+
+    if (!File.Exists(indexPath))
+    {
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        await context.Response.WriteAsync("Angular UI is not present in wwwroot. Check the Render Dockerfile/build context.");
+        return;
+    }
+
+    context.Response.ContentType = "text/html; charset=utf-8";
+    await context.Response.SendFileAsync(indexPath);
+});
 app.Run();
