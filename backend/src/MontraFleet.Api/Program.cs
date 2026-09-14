@@ -45,6 +45,38 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.EnsureCreatedAsync();
     await db.Database.ExecuteSqlRawAsync("""
+        CREATE TABLE IF NOT EXISTS "MaintenanceRequests" (
+          "Id" uuid PRIMARY KEY, "RequestNumber" text NOT NULL, "VehicleId" uuid NOT NULL, "SourceType" text NOT NULL DEFAULT 'Manual',
+          "SourceReference" text NOT NULL DEFAULT '', "RequestType" text NOT NULL DEFAULT 'Repair', "Priority" text NOT NULL DEFAULT 'P3',
+          "Description" text NOT NULL DEFAULT '', "Status" text NOT NULL DEFAULT 'Open', "RequestedBy" text NOT NULL DEFAULT 'Fleet User',
+          "RequestedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, "TargetDate" timestamptz NULL, "JobCardId" uuid NULL);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenanceRequests_RequestNumber" ON "MaintenanceRequests" ("RequestNumber");
+        CREATE INDEX IF NOT EXISTS "IX_MaintenanceRequests_Vehicle_Status" ON "MaintenanceRequests" ("VehicleId","Status");
+
+        CREATE TABLE IF NOT EXISTS "ServiceTaskMasters" (
+          "Id" uuid PRIMARY KEY, "TaskCode" text NOT NULL, "Name" text NOT NULL, "Category" text NOT NULL DEFAULT '', "Description" text NOT NULL DEFAULT '',
+          "StandardHours" numeric(18,2) NOT NULL DEFAULT 0, "RequiredSkillCode" text NOT NULL DEFAULT '', "RequiresHvAuthorization" boolean NOT NULL DEFAULT false,
+          "RequiresQc" boolean NOT NULL DEFAULT true, "ChecklistCode" text NOT NULL DEFAULT '', "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_ServiceTaskMasters_TaskCode" ON "ServiceTaskMasters" ("TaskCode");
+
+        CREATE TABLE IF NOT EXISTS "ServiceTaskStandardParts" (
+          "Id" uuid PRIMARY KEY, "ServiceTaskMasterId" uuid NOT NULL, "PartMasterId" uuid NOT NULL, "Quantity" numeric(18,3) NOT NULL DEFAULT 0);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_ServiceTaskStandardParts_Master_Part" ON "ServiceTaskStandardParts" ("ServiceTaskMasterId","PartMasterId");
+
+        CREATE TABLE IF NOT EXISTS "WorkOrderCosts" (
+          "Id" uuid PRIMARY KEY, "JobCardId" uuid NOT NULL, "WorkItemId" uuid NULL, "CostType" text NOT NULL DEFAULT 'Other',
+          "Description" text NOT NULL DEFAULT '', "Amount" numeric(18,2) NOT NULL DEFAULT 0, "VendorReference" text NOT NULL DEFAULT '',
+          "PostedBy" text NOT NULL DEFAULT 'Service User', "PostedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        CREATE INDEX IF NOT EXISTS "IX_WorkOrderCosts_JobCard_PostedAt" ON "WorkOrderCosts" ("JobCardId","PostedAt");
+
+        ALTER TABLE "PartMasters" ADD COLUMN IF NOT EXISTS "StandardCost" numeric(18,2) NOT NULL DEFAULT 0;
+        ALTER TABLE "PartTransactions" ADD COLUMN IF NOT EXISTS "UnitCost" numeric(18,2) NOT NULL DEFAULT 0;
+        ALTER TABLE "PartTransactions" ADD COLUMN IF NOT EXISTS "ExtendedCost" numeric(18,2) NOT NULL DEFAULT 0;
+        ALTER TABLE "LabourEntries" ADD COLUMN IF NOT EXISTS "HourlyRate" numeric(18,2) NOT NULL DEFAULT 0;
+        ALTER TABLE "LabourEntries" ADD COLUMN IF NOT EXISTS "CostAmount" numeric(18,2) NOT NULL DEFAULT 0;
+    """);
+
+    await db.Database.ExecuteSqlRawAsync("""
         ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "AppointmentNumber" text NOT NULL DEFAULT '';
         ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "SourceType" text NOT NULL DEFAULT 'Manual';
         ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "SourceReference" text NOT NULL DEFAULT '';
@@ -150,11 +182,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.3" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.5" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.3" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.5" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -162,7 +194,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.3" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.5" });
 });
 
 app.MapGet("/api/dashboard/summary", async (AppDbContext db) =>
@@ -714,6 +746,98 @@ app.MapGet("/api/quality", async (AppDbContext db)=>
     return Results.Ok(new{firstTimeFix=ftfPct,repeatFailures=repeats,openRca,qcPass=total==0?100:Math.Round(pass*100.0/total,1)});
 });
 
+
+// ---------------- v1.5 Functional Fleet Maintenance Baseline ----------------
+app.MapGet("/api/maintenance-requests", async (string? status, Guid? vehicleId, AppDbContext db) =>
+{
+    var q=db.MaintenanceRequests.AsNoTracking().AsQueryable();
+    if(!string.IsNullOrWhiteSpace(status))q=q.Where(x=>x.Status==status);
+    if(vehicleId.HasValue)q=q.Where(x=>x.VehicleId==vehicleId.Value);
+    var rows=await (from r in q join v in db.Vehicles.AsNoTracking() on r.VehicleId equals v.Id
+        orderby r.RequestedAt descending select new{r.Id,r.RequestNumber,r.VehicleId,vehicle=v.RegistrationNumber,r.SourceType,r.SourceReference,
+        r.RequestType,r.Priority,r.Description,r.Status,r.RequestedBy,r.RequestedAt,r.TargetDate,r.JobCardId}).ToListAsync();
+    return Results.Ok(rows);
+});
+app.MapPost("/api/maintenance-requests", async (MaintenanceRequestCreate r, AppDbContext db) =>
+{
+    if(!await db.Vehicles.AnyAsync(x=>x.Id==r.VehicleId))return Results.BadRequest(new{message="Vehicle not found."});
+    var mr=new MaintenanceRequest{RequestNumber=$"MR-{DateTime.UtcNow:yyyyMMdd}-{(await db.MaintenanceRequests.CountAsync()+1):D5}",VehicleId=r.VehicleId,
+        SourceType=r.SourceType,SourceReference=r.SourceReference,RequestType=r.RequestType,Priority=r.Priority,Description=r.Description,
+        Status="Open",RequestedBy=r.RequestedBy,RequestedAt=DateTime.UtcNow,TargetDate=r.TargetDate};
+    db.MaintenanceRequests.Add(mr);Audit(db,"CREATE","MaintenanceRequest",mr.Id,$"{mr.RequestNumber}:{mr.Description}",r.RequestedBy);await db.SaveChangesAsync();return Results.Created($"/api/maintenance-requests/{mr.Id}",mr);
+});
+app.MapPut("/api/maintenance-requests/{id:guid}/status", async (Guid id,StatusRequest r,AppDbContext db)=>{var x=await db.MaintenanceRequests.FindAsync(id);if(x is null)return Results.NotFound();x.Status=r.Status;Audit(db,"STATUS","MaintenanceRequest",x.Id,r.Status);await db.SaveChangesAsync();return Results.Ok(x);});
+
+app.MapPost("/api/work-orders/from-requests", async (CreateWorkOrderRequest r,AppDbContext db)=>
+{
+    if(r.RequestIds is null||r.RequestIds.Length==0)return Results.BadRequest(new{message="Select at least one maintenance request."});
+    var reqs=await db.MaintenanceRequests.Where(x=>r.RequestIds.Contains(x.Id)).ToListAsync();
+    if(reqs.Count!=r.RequestIds.Length)return Results.BadRequest(new{message="One or more requests were not found."});
+    if(reqs.Any(x=>x.JobCardId!=null))return Results.Conflict(new{message="One or more requests are already linked to a work order."});
+    var vehicleId=reqs[0].VehicleId;if(reqs.Any(x=>x.VehicleId!=vehicleId))return Results.BadRequest(new{message="All requests grouped into a work order must belong to the same vehicle."});
+    var vehicle=await db.Vehicles.FindAsync(vehicleId);if(vehicle is null)return Results.BadRequest();
+    var e=new ServiceEvent{VehicleId=vehicleId,EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}",EventType="Maintenance",Priority=r.Priority,Status="Open"};
+    var j=new JobCard{ServiceEventId=e.Id,JobCardNumber=$"WO-{DateTime.UtcNow:yyyy}-{(await db.JobCards.CountAsync()+1):D6}",Status="Open",Bay=r.Bay,TechnicianId=r.TechnicianId,Technician=r.Technician,StartedAt=null};
+    db.ServiceEvents.Add(e);db.JobCards.Add(j);foreach(var x in reqs){x.JobCardId=j.Id;x.Status="Converted";}
+    Audit(db,"CREATE","WorkOrder",j.Id,$"{j.JobCardNumber} from {reqs.Count} request(s)",r.CreatedBy);await db.SaveChangesAsync();return Results.Ok(new{workOrder=j,serviceEvent=e});
+});
+
+app.MapGet("/api/work-orders", async (AppDbContext db)=>
+{
+    var rows=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
+        orderby j.StartedAt descending select new{j.Id,workOrderNumber=j.JobCardNumber,vehicle=v.RegistrationNumber,e.VehicleId,e.EventNumber,e.EventType,e.Priority,j.Status,j.Bay,j.Technician,j.StartedAt,j.CompletedAt,
+        requestCount=db.MaintenanceRequests.Count(r=>r.JobCardId==j.Id),taskCount=db.WorkItems.Count(t=>t.JobCardId==j.Id),openDefects=db.Defects.Count(d=>d.JobCardId==j.Id&&d.Disposition!="Closed")}).ToListAsync();return Results.Ok(rows);
+});
+
+app.MapGet("/api/service-task-master", async (AppDbContext db)=>Results.Ok(await db.ServiceTaskMasters.AsNoTracking().OrderBy(x=>x.TaskCode).ToListAsync()));
+app.MapPost("/api/service-task-master", async (ServiceTaskMasterCreate r,AppDbContext db)=>
+{
+    if(await db.ServiceTaskMasters.AnyAsync(x=>x.TaskCode==r.TaskCode))return Results.Conflict(new{message="Task code already exists."});
+    var x=new ServiceTaskMaster{TaskCode=r.TaskCode,Name=r.Name,Category=r.Category,Description=r.Description,StandardHours=r.StandardHours,RequiredSkillCode=r.RequiredSkillCode,
+        RequiresHvAuthorization=r.RequiresHvAuthorization,RequiresQc=r.RequiresQc,ChecklistCode=r.ChecklistCode,IsActive=true};db.ServiceTaskMasters.Add(x);Audit(db,"CREATE","ServiceTaskMaster",x.Id,x.TaskCode);await db.SaveChangesAsync();return Results.Ok(x);
+});
+app.MapPost("/api/service-task-master/{id:guid}/parts", async (Guid id,StandardPartCreate r,AppDbContext db)=>
+{
+    if(!await db.ServiceTaskMasters.AnyAsync(x=>x.Id==id)||!await db.PartMasters.AnyAsync(x=>x.Id==r.PartMasterId))return Results.BadRequest();
+    var x=await db.ServiceTaskStandardParts.FirstOrDefaultAsync(p=>p.ServiceTaskMasterId==id&&p.PartMasterId==r.PartMasterId);if(x==null){x=new ServiceTaskStandardPart{ServiceTaskMasterId=id,PartMasterId=r.PartMasterId,Quantity=r.Quantity};db.ServiceTaskStandardParts.Add(x);}else x.Quantity=r.Quantity;await db.SaveChangesAsync();return Results.Ok(x);
+});
+app.MapPost("/api/work-orders/{jobCardId:guid}/tasks/from-master/{masterId:guid}", async (Guid jobCardId,Guid masterId,TaskFromMasterRequest r,AppDbContext db)=>
+{
+    var j=await db.JobCards.FindAsync(jobCardId);var m=await db.ServiceTaskMasters.FindAsync(masterId);if(j is null||m is null)return Results.NotFound();
+    Technician? tech=null;if(r.TechnicianId.HasValue)tech=await db.Technicians.FindAsync(r.TechnicianId.Value);
+    if(m.RequiresHvAuthorization&&tech!=null&&(!tech.HvAuthorized||tech.HvAuthorizationValidUntil<DateTime.UtcNow))return Results.Conflict(new{message="Selected technician does not have active HV authorization."});
+    var t=new WorkItem{JobCardId=j.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMdd}-{(await db.WorkItems.CountAsync()+1):D5}",WorkType=m.Category,Description=m.Name,Status=tech==null?"Not Started":"Assigned",
+        AssignedToTechnicianId=tech?.Id,AssignedTo=tech?.Name??"",Priority=r.Priority,EstimatedHours=m.StandardHours,StandardRepairHours=m.StandardHours,RequiresQc=m.RequiresQc,RequiresHvAuthorization=m.RequiresHvAuthorization,UpdatedAt=DateTime.UtcNow};
+    db.WorkItems.Add(t);await db.SaveChangesAsync();
+    var parts=await db.ServiceTaskStandardParts.AsNoTracking().Where(x=>x.ServiceTaskMasterId==m.Id).ToListAsync();
+    return Results.Ok(new{task=t,standardParts=parts});
+});
+
+app.MapGet("/api/work-orders/{jobCardId:guid}/costs", async (Guid jobCardId,AppDbContext db)=>
+{
+    var parts=await db.PartTransactions.Where(x=>x.JobCardId==jobCardId&&x.TransactionType=="Issue").SumAsync(x=>(decimal?)x.ExtendedCost)??0;
+    var labour=await db.LabourEntries.Where(x=>x.JobCardId==jobCardId).SumAsync(x=>(decimal?)x.CostAmount)??0;
+    var extras=await db.WorkOrderCosts.Where(x=>x.JobCardId==jobCardId).ToListAsync();var external=extras.Where(x=>x.CostType=="External").Sum(x=>x.Amount);var other=extras.Where(x=>x.CostType!="External").Sum(x=>x.Amount);
+    return Results.Ok(new{parts,labour,external,other,total=parts+labour+external+other,entries=extras});
+});
+app.MapPost("/api/work-orders/{jobCardId:guid}/costs", async (Guid jobCardId,WorkOrderCostCreate r,AppDbContext db)=>
+{
+    if(!await db.JobCards.AnyAsync(x=>x.Id==jobCardId))return Results.NotFound();var x=new WorkOrderCost{JobCardId=jobCardId,WorkItemId=r.WorkItemId,CostType=r.CostType,Description=r.Description,Amount=r.Amount,VendorReference=r.VendorReference,PostedBy=r.PostedBy};db.WorkOrderCosts.Add(x);Audit(db,"CREATE","WorkOrderCost",x.Id,$"{r.CostType}:{r.Amount}",r.PostedBy);await db.SaveChangesAsync();return Results.Ok(x);
+});
+
+app.MapGet("/api/analytics/maintenance", async (AppDbContext db)=>
+{
+    var now=DateTime.UtcNow;var vehicles=await db.Vehicles.CountAsync();var pmTotal=await db.PmObligations.CountAsync();var pmOverdue=await db.PmObligations.CountAsync(x=>x.Status=="Overdue");
+    var closed=await db.ServiceEvents.AsNoTracking().Where(x=>x.ClosedAt!=null).ToListAsync();var mttr=closed.Count==0?0:Math.Round(closed.Average(x=>(x.ClosedAt!.Value-x.OpenedAt).TotalHours),1);
+    var ftf=await db.FirstTimeFixResults.AsNoTracking().Where(x=>x.Eligible).ToListAsync();var ftfPct=ftf.Count==0?100:Math.Round(ftf.Count(x=>x.Passed)*100.0/ftf.Count,1);
+    var repeat=await db.RepeatFailureMatches.CountAsync(x=>x.IsRepeat);var avail=await db.Vehicles.CountAsync(x=>x.Status=="Available");
+    var partCost=await db.PartTransactions.SumAsync(x=>(decimal?)x.ExtendedCost)??0;var labourCost=await db.LabourEntries.SumAsync(x=>(decimal?)x.CostAmount)??0;var otherCost=await db.WorkOrderCosts.SumAsync(x=>(decimal?)x.Amount)??0;
+    var odo=await db.Vehicles.SumAsync(x=>(decimal?)x.OdometerKm)??0;var totalCost=partCost+labourCost+otherCost;
+    var tasks=await db.WorkItems.AsNoTracking().ToListAsync();var completedTasks=tasks.Count(x=>x.Status=="Completed");
+    return Results.Ok(new{vehicles,availabilityPct=vehicles==0?100:Math.Round(avail*100.0/vehicles,1),pmCompliancePct=pmTotal==0?100:Math.Round((pmTotal-pmOverdue)*100.0/pmTotal,1),mttrHours=mttr,firstTimeFixPct=ftfPct,repeatFailures=repeat,
+        taskCompletionPct=tasks.Count==0?100:Math.Round(completedTasks*100.0/tasks.Count,1),totalMaintenanceCost=totalCost,costPerKm=odo==0?0:Math.Round(totalCost/odo,2),openRequests=await db.MaintenanceRequests.CountAsync(x=>x.Status=="Open"),openWorkOrders=await db.JobCards.CountAsync(x=>x.Status!="Completed"&&x.Status!="Closed")});
+});
+
 app.MapFallback(async context =>
 {
     var env=context.RequestServices.GetRequiredService<IWebHostEnvironment>();
@@ -749,7 +873,15 @@ record TaskRequest(Guid JobCardId,string WorkType,string Description,Guid? Assig
 record TaskStatusRequest(string Status,decimal? ActualHours,string? CompletionRemarks,string? EvidenceReference);
 record TaskAssignRequest(Guid TechnicianId);
 
-record PartMasterRequest(string PartNumber,string Description,string Category,string UnitOfMeasure,string ManufacturerPartNumber,bool IsSerialized,bool IsWarrantyReturnable,decimal ReorderLevel,decimal ReorderQuantity);
+record PartMasterRequest(string PartNumber,string Description,string Category,string UnitOfMeasure,string ManufacturerPartNumber,bool IsSerialized,bool IsWarrantyReturnable,decimal ReorderLevel,decimal ReorderQuantity,decimal StandardCost);
 record StockMovementRequest(Guid PartMasterId,Guid InventoryLocationId,decimal Quantity,string User);
 record PartRequestCreate(Guid JobCardId,Guid? WorkItemId,Guid PartMasterId,Guid InventoryLocationId,decimal Quantity,bool WarrantyCandidate,string FailedPartDisposition,string RequestedBy);
 record QuantityAction(decimal Quantity,string User);
+
+
+record MaintenanceRequestCreate(Guid VehicleId,string SourceType,string SourceReference,string RequestType,string Priority,string Description,string RequestedBy,DateTime? TargetDate);
+record CreateWorkOrderRequest(Guid[] RequestIds,string Priority,string Bay,Guid? TechnicianId,string Technician,string CreatedBy);
+record ServiceTaskMasterCreate(string TaskCode,string Name,string Category,string Description,decimal StandardHours,string RequiredSkillCode,bool RequiresHvAuthorization,bool RequiresQc,string ChecklistCode);
+record StandardPartCreate(Guid PartMasterId,decimal Quantity);
+record TaskFromMasterRequest(Guid? TechnicianId,string Priority);
+record WorkOrderCostCreate(Guid? WorkItemId,string CostType,string Description,decimal Amount,string VendorReference,string PostedBy);

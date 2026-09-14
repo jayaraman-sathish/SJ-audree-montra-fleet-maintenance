@@ -181,6 +181,7 @@ public class PartMaster
     public bool IsWarrantyReturnable { get; set; }
     public decimal ReorderLevel { get; set; }
     public decimal ReorderQuantity { get; set; }
+    public decimal StandardCost { get; set; }
     public bool IsActive { get; set; } = true;
 }
 
@@ -243,6 +244,8 @@ public class PartTransaction
     public string AuthorizationStatus { get; set; } = "Not Required";
     public string PerformedBy { get; set; } = "Store User";
     public DateTime TransactionAt { get; set; } = DateTime.UtcNow;
+    public decimal UnitCost { get; set; }
+    public decimal ExtendedCost { get; set; }
 }
 
 public class LabourEntry
@@ -256,6 +259,8 @@ public class LabourEntry
     public DateTime? EndAt { get; set; }
     public decimal Hours { get; set; }
     public string SkillCode { get; set; } = string.Empty;
+    public decimal HourlyRate { get; set; }
+    public decimal CostAmount { get; set; }
 }
 
 public class QcInspection
@@ -375,3 +380,57 @@ public class Campaign { public Guid Id { get; set; } = Guid.NewGuid(); public st
 public class VehicleCampaign { public Guid Id { get; set; } = Guid.NewGuid(); public Guid CampaignId { get; set; } public Guid VehicleId { get; set; } public string Status { get; set; } = "Open"; public Guid? ServiceEventId { get; set; } public DateTime? CompletedAt { get; set; } }
 public class VehicleDocument { public Guid Id { get; set; } = Guid.NewGuid(); public Guid VehicleId { get; set; } public string DocumentType { get; set; } = string.Empty; public string FileName { get; set; } = string.Empty; public string StorageReference { get; set; } = string.Empty; public string UploadedBy { get; set; } = string.Empty; public DateTime UploadedAt { get; set; } = DateTime.UtcNow; public string Status { get; set; } = "Active"; }
 public class IntegrationOutbox { public Guid Id { get; set; } = Guid.NewGuid(); public string IntegrationName { get; set; } = string.Empty; public string MessageType { get; set; } = string.Empty; public string EntityType { get; set; } = string.Empty; public Guid? EntityId { get; set; } public string PayloadJson { get; set; } = "{}"; public string Status { get; set; } = "Pending"; public int AttemptCount { get; set; } public DateTime CreatedAt { get; set; } = DateTime.UtcNow; public DateTime? ProcessedAt { get; set; } }
+
+
+public class MaintenanceRequest
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string RequestNumber { get; set; } = string.Empty;
+    public Guid VehicleId { get; set; }
+    public string SourceType { get; set; } = "Manual";
+    public string SourceReference { get; set; } = string.Empty;
+    public string RequestType { get; set; } = "Repair";
+    public string Priority { get; set; } = "P3";
+    public string Description { get; set; } = string.Empty;
+    public string Status { get; set; } = "Open";
+    public string RequestedBy { get; set; } = "Fleet User";
+    public DateTime RequestedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? TargetDate { get; set; }
+    public Guid? JobCardId { get; set; }
+}
+
+public class ServiceTaskMaster
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string TaskCode { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public decimal StandardHours { get; set; }
+    public string RequiredSkillCode { get; set; } = string.Empty;
+    public bool RequiresHvAuthorization { get; set; }
+    public bool RequiresQc { get; set; } = true;
+    public string ChecklistCode { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
+public class ServiceTaskStandardPart
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid ServiceTaskMasterId { get; set; }
+    public Guid PartMasterId { get; set; }
+    public decimal Quantity { get; set; }
+}
+
+public class WorkOrderCost
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid JobCardId { get; set; }
+    public Guid? WorkItemId { get; set; }
+    public string CostType { get; set; } = "Other";
+    public string Description { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public string VendorReference { get; set; } = string.Empty;
+    public string PostedBy { get; set; } = "Service User";
+    public DateTime PostedAt { get; set; } = DateTime.UtcNow;
+}

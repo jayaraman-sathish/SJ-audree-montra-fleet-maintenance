@@ -37,6 +37,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<VehicleCampaign> VehicleCampaigns => Set<VehicleCampaign>();
     public DbSet<VehicleDocument> VehicleDocuments => Set<VehicleDocument>();
     public DbSet<IntegrationOutbox> IntegrationOutbox => Set<IntegrationOutbox>();
+    public DbSet<MaintenanceRequest> MaintenanceRequests => Set<MaintenanceRequest>();
+    public DbSet<ServiceTaskMaster> ServiceTaskMasters => Set<ServiceTaskMaster>();
+    public DbSet<ServiceTaskStandardPart> ServiceTaskStandardParts => Set<ServiceTaskStandardPart>();
+    public DbSet<WorkOrderCost> WorkOrderCosts => Set<WorkOrderCost>();
 
     protected override void OnModelCreating(ModelBuilder m)
     {
@@ -74,5 +78,19 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         m.Entity<VehicleCampaign>().HasIndex(x => new { x.VehicleId, x.CampaignId }).IsUnique();
         m.Entity<VehicleDocument>().HasIndex(x => new { x.VehicleId, x.DocumentType, x.UploadedAt });
         m.Entity<IntegrationOutbox>().HasIndex(x => new { x.Status, x.CreatedAt });
+        m.Entity<MaintenanceRequest>().HasIndex(x => x.RequestNumber).IsUnique();
+        m.Entity<MaintenanceRequest>().HasIndex(x => new { x.VehicleId, x.Status });
+        m.Entity<ServiceTaskMaster>().HasIndex(x => x.TaskCode).IsUnique();
+        m.Entity<ServiceTaskMaster>().Property(x => x.StandardHours).HasPrecision(18, 2);
+        m.Entity<ServiceTaskStandardPart>().HasIndex(x => new { x.ServiceTaskMasterId, x.PartMasterId }).IsUnique();
+        m.Entity<ServiceTaskStandardPart>().Property(x => x.Quantity).HasPrecision(18, 3);
+        m.Entity<PartMaster>().Property(x => x.StandardCost).HasPrecision(18, 2);
+        m.Entity<PartTransaction>().Property(x => x.UnitCost).HasPrecision(18, 2);
+        m.Entity<PartTransaction>().Property(x => x.ExtendedCost).HasPrecision(18, 2);
+        m.Entity<LabourEntry>().Property(x => x.HourlyRate).HasPrecision(18, 2);
+        m.Entity<LabourEntry>().Property(x => x.CostAmount).HasPrecision(18, 2);
+        m.Entity<WorkOrderCost>().Property(x => x.Amount).HasPrecision(18, 2);
+        m.Entity<WorkOrderCost>().HasIndex(x => new { x.JobCardId, x.PostedAt });
+
     }
 }
