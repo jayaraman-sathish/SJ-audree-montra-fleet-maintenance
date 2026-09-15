@@ -517,9 +517,35 @@ public class ServiceCentreMaster
     public string PostalCode { get; set; } = string.Empty;
     public string ContactPerson { get; set; } = string.Empty;
     public string Mobile { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
     public string WorkingHours { get; set; } = string.Empty;
     public int BayCount { get; set; }
     public bool IsActive { get; set; } = true;
+}
+
+public class ServiceCentreModelSupport
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid ServiceCentreMasterId { get; set; }
+    public Guid VehicleModelMasterId { get; set; }
+}
+
+public class ServiceCentreUpsertRequest
+{
+    public string CentreCode { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string CentreType { get; set; } = "Authorized";
+    public string AddressLine1 { get; set; } = string.Empty;
+    public string City { get; set; } = string.Empty;
+    public string State { get; set; } = string.Empty;
+    public string PostalCode { get; set; } = string.Empty;
+    public string ContactPerson { get; set; } = string.Empty;
+    public string Mobile { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string WorkingHours { get; set; } = string.Empty;
+    public int BayCount { get; set; } = 3;
+    public bool IsActive { get; set; } = true;
+    public List<Guid> SupportedModelIds { get; set; } = new();
 }
 
 public class MaintenanceProgram

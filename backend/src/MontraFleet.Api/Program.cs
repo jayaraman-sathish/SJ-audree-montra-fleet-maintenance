@@ -248,6 +248,14 @@ using (var scope = app.Services.CreateScope())
           "ContactPerson" text NOT NULL DEFAULT '', "Mobile" text NOT NULL DEFAULT '', "WorkingHours" text NOT NULL DEFAULT '',
           "BayCount" integer NOT NULL DEFAULT 0, "IsActive" boolean NOT NULL DEFAULT true);
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_ServiceCentreMasters_CentreCode" ON "ServiceCentreMasters" ("CentreCode");
+
+        ALTER TABLE "ServiceCentreMasters" ADD COLUMN IF NOT EXISTS "Email" text NOT NULL DEFAULT '';
+        CREATE TABLE IF NOT EXISTS "ServiceCentreModelSupports" (
+          "Id" uuid PRIMARY KEY,
+          "ServiceCentreMasterId" uuid NOT NULL,
+          "VehicleModelMasterId" uuid NOT NULL);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_ServiceCentreModelSupports_Centre_Model"
+          ON "ServiceCentreModelSupports" ("ServiceCentreMasterId","VehicleModelMasterId");
     """);
 
 
@@ -342,6 +350,43 @@ using (var scope = app.Services.CreateScope())
     await EnsureVariant(rhino,"RHINO_5538_6X4","Rhino 5538 EV 6x4",null,"6x4");
     await EnsureVariant(tipper,"TIPPER_2868_6X4","Tipper 2868 EV 6x4",null,"6x4 Tipper");
 
+
+    async Task<ServiceCentreMaster> EnsureCentre(string code,string name,string address,string city,string state,string postal,string mobile,string email)
+    {
+        var c=await db.ServiceCentreMasters.FirstOrDefaultAsync(x=>x.CentreCode==code);
+        if(c is null)
+        {
+            c=new ServiceCentreMaster{CentreCode=code,Name=name,CentreType="Authorized",AddressLine1=address,City=city,State=state,PostalCode=postal,
+                Mobile=mobile,Email=email,BayCount=3,IsActive=true};
+            db.ServiceCentreMasters.Add(c);await db.SaveChangesAsync();
+        }
+        else
+        {
+            c.Name=name;c.CentreType="Authorized";c.AddressLine1=address;c.City=city;c.State=state;c.PostalCode=postal;c.Mobile=mobile;c.Email=email;c.BayCount=3;c.IsActive=true;
+            await db.SaveChangesAsync();
+        }
+        return c;
+    }
+    async Task EnsureCentreModels(ServiceCentreMaster centre, params VehicleModelMaster[] supported)
+    {
+        foreach(var m in supported)
+            if(!await db.ServiceCentreModelSupports.AnyAsync(x=>x.ServiceCentreMasterId==centre.Id&&x.VehicleModelMasterId==m.Id))
+                db.ServiceCentreModelSupports.Add(new ServiceCentreModelSupport{ServiceCentreMasterId=centre.Id,VehicleModelMasterId=m.Id});
+        await db.SaveChangesAsync();
+    }
+
+    var anjana=await EnsureCentre("ANJANA-ATP","Anjana Electric Vehicles",
+        "6-240,241,242,243,244,245, M R S M Complex, Azad Nagar, Bellary Bypass Road","Anantapur","Andhra Pradesh","515004","9110375242","anjanaelectric.atp@montraelectric.com");
+    await EnsureCentreModels(anjana,superAuto,superCargo);
+
+    var sriram=await EnsureCentre("SRIRAM-VNS","Sriram Harsha LLP",
+        "Opp deer park, beside Bharath benz, Vanasthalipuram","Vanasthalipuram","Telangana","500070","9030196652","vnsnandina@gmail.com");
+    await EnsureCentreModels(sriram,eviator,tractor27,tractor45);
+
+    var sol=await EnsureCentre("SOL-GGN","SOL Automotives",
+        "Ground floor, khewat no 861, kherki daula, Jaipur Road, opp govt school main road nh 8, Kherki Daula","Gurugram","Haryana","122004","9891333888","RAJESHGULIA@SOLINDIA.NET");
+    await EnsureCentreModels(sol,eviator,tractor27,tractor45);
+
     if (!await db.InventoryLocations.AnyAsync())
     {
         db.InventoryLocations.Add(new InventoryLocation { LocationCode="MAIN-STORE", Name="Main Parts Store", ServiceCentre="Chennai Service Centre", Bin="GENERAL" });
@@ -391,11 +436,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.6.4" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.6.5" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.6.4" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.6.5" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -403,7 +448,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.6.4" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.6.5" });
 });
 
 static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
@@ -582,19 +627,42 @@ app.MapPut("/api/pm/depots/{id:guid}", async (Guid id,DepotMaster r,AppDbContext
     x.ContactPerson=r.ContactPerson;x.Mobile=r.Mobile;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
 });
 
-app.MapGet("/api/pm/service-centres", async (AppDbContext db) => Results.Ok(await db.ServiceCentreMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
-app.MapPost("/api/pm/service-centres", async (ServiceCentreMaster r,AppDbContext db)=>
+app.MapGet("/api/pm/service-centres", async (AppDbContext db) =>
 {
-    r.Id=Guid.NewGuid();r.CentreCode=r.CentreCode.Trim().ToUpperInvariant();
-    if(string.IsNullOrWhiteSpace(r.CentreCode)||string.IsNullOrWhiteSpace(r.Name))return Results.BadRequest(new{message="Service centre code and name are required."});
-    if(await db.ServiceCentreMasters.AnyAsync(x=>x.CentreCode==r.CentreCode))return Results.Conflict(new{message="Service centre code already exists."});
-    db.ServiceCentreMasters.Add(r);await db.SaveChangesAsync();return Results.Ok(r);
+    var centres=await db.ServiceCentreMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync();
+    var maps=await db.ServiceCentreModelSupports.AsNoTracking().ToListAsync();
+    var models=await db.VehicleModelMasters.AsNoTracking().ToListAsync();
+    return Results.Ok(centres.Select(x=>new{
+        x.Id,x.CentreCode,x.Name,x.CentreType,x.AddressLine1,x.City,x.State,x.PostalCode,x.ContactPerson,x.Mobile,x.Email,x.WorkingHours,x.BayCount,x.IsActive,
+        supportedModelIds=maps.Where(m=>m.ServiceCentreMasterId==x.Id).Select(m=>m.VehicleModelMasterId).ToList(),
+        supportedModels=maps.Where(m=>m.ServiceCentreMasterId==x.Id).Join(models,m=>m.VehicleModelMasterId,v=>v.Id,(m,v)=>new{v.Id,v.ModelCode,v.Name}).OrderBy(v=>v.Name).ToList()
+    }));
 });
-app.MapPut("/api/pm/service-centres/{id:guid}", async (Guid id,ServiceCentreMaster r,AppDbContext db)=>
+app.MapPost("/api/pm/service-centres", async (ServiceCentreUpsertRequest r,AppDbContext db)=>
+{
+    var code=r.CentreCode.Trim().ToUpperInvariant();
+    if(string.IsNullOrWhiteSpace(code)||string.IsNullOrWhiteSpace(r.Name))return Results.BadRequest(new{message="Service centre code and name are required."});
+    if(await db.ServiceCentreMasters.AnyAsync(x=>x.CentreCode==code))return Results.Conflict(new{message="Service centre code already exists."});
+    var validModelIds=await db.VehicleModelMasters.Where(x=>r.SupportedModelIds.Contains(x.Id)).Select(x=>x.Id).ToListAsync();
+    if(validModelIds.Count!=r.SupportedModelIds.Distinct().Count())return Results.BadRequest(new{message="One or more supported vehicle models are invalid."});
+    var x=new ServiceCentreMaster{
+        CentreCode=code,Name=r.Name,CentreType=r.CentreType,AddressLine1=r.AddressLine1,City=r.City,State=r.State,PostalCode=r.PostalCode,
+        ContactPerson=r.ContactPerson,Mobile=r.Mobile,Email=r.Email,WorkingHours=r.WorkingHours,BayCount=r.BayCount<=0?3:r.BayCount,IsActive=r.IsActive
+    };
+    db.ServiceCentreMasters.Add(x);
+    foreach(var modelId in validModelIds)db.ServiceCentreModelSupports.Add(new ServiceCentreModelSupport{ServiceCentreMasterId=x.Id,VehicleModelMasterId=modelId});
+    await db.SaveChangesAsync();return Results.Ok(x);
+});
+app.MapPut("/api/pm/service-centres/{id:guid}", async (Guid id,ServiceCentreUpsertRequest r,AppDbContext db)=>
 {
     var x=await db.ServiceCentreMasters.FindAsync(id);if(x is null)return Results.NotFound();
+    var validModelIds=await db.VehicleModelMasters.Where(m=>r.SupportedModelIds.Contains(m.Id)).Select(m=>m.Id).ToListAsync();
+    if(validModelIds.Count!=r.SupportedModelIds.Distinct().Count())return Results.BadRequest(new{message="One or more supported vehicle models are invalid."});
     x.Name=r.Name;x.CentreType=r.CentreType;x.AddressLine1=r.AddressLine1;x.City=r.City;x.State=r.State;x.PostalCode=r.PostalCode;
-    x.ContactPerson=r.ContactPerson;x.Mobile=r.Mobile;x.WorkingHours=r.WorkingHours;x.BayCount=r.BayCount;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
+    x.ContactPerson=r.ContactPerson;x.Mobile=r.Mobile;x.Email=r.Email;x.WorkingHours=r.WorkingHours;x.BayCount=r.BayCount<=0?3:r.BayCount;x.IsActive=r.IsActive;
+    var old=await db.ServiceCentreModelSupports.Where(m=>m.ServiceCentreMasterId==id).ToListAsync();db.ServiceCentreModelSupports.RemoveRange(old);
+    foreach(var modelId in validModelIds)db.ServiceCentreModelSupports.Add(new ServiceCentreModelSupport{ServiceCentreMasterId=id,VehicleModelMasterId=modelId});
+    await db.SaveChangesAsync();return Results.Ok(x);
 });
 
 app.MapGet("/api/pm/programs", async (AppDbContext db) => Results.Ok(await db.MaintenancePrograms.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
