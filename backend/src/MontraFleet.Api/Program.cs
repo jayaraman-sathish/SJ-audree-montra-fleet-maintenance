@@ -209,6 +209,139 @@ using (var scope = app.Services.CreateScope())
 
 
 
+    await db.Database.ExecuteSqlRawAsync("""
+        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "GvwKg" numeric(18,2) NULL;
+        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "PayloadKg" numeric(18,2) NULL;
+        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "BatteryCapacityKwh" numeric(18,2) NULL;
+        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "MotorPowerKw" numeric(18,2) NULL;
+        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "WheelbaseMm" numeric(18,2) NULL;
+        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "Configuration" text NOT NULL DEFAULT '';
+        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "EffectiveFrom" timestamptz NULL;
+
+        CREATE TABLE IF NOT EXISTS "ManufacturerMasters" (
+          "Id" uuid PRIMARY KEY, "ManufacturerCode" text NOT NULL, "Name" text NOT NULL DEFAULT '',
+          "Country" text NOT NULL DEFAULT 'India', "WebsiteUrl" text NOT NULL DEFAULT '',
+          "ContactPhone" text NOT NULL DEFAULT '', "ContactEmail" text NOT NULL DEFAULT '',
+          "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_ManufacturerMasters_ManufacturerCode" ON "ManufacturerMasters" ("ManufacturerCode");
+
+        CREATE TABLE IF NOT EXISTS "CustomerMasters" (
+          "Id" uuid PRIMARY KEY, "CustomerCode" text NOT NULL, "Name" text NOT NULL DEFAULT '',
+          "AddressLine1" text NOT NULL DEFAULT '', "AddressLine2" text NOT NULL DEFAULT '',
+          "City" text NOT NULL DEFAULT '', "State" text NOT NULL DEFAULT '', "PostalCode" text NOT NULL DEFAULT '',
+          "Country" text NOT NULL DEFAULT 'India', "Gstin" text NOT NULL DEFAULT '',
+          "ContactPerson" text NOT NULL DEFAULT '', "Mobile" text NOT NULL DEFAULT '', "Email" text NOT NULL DEFAULT '',
+          "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_CustomerMasters_CustomerCode" ON "CustomerMasters" ("CustomerCode");
+
+        CREATE TABLE IF NOT EXISTS "DepotMasters" (
+          "Id" uuid PRIMARY KEY, "DepotCode" text NOT NULL, "Name" text NOT NULL DEFAULT '',
+          "CustomerMasterId" uuid NULL, "AddressLine1" text NOT NULL DEFAULT '', "City" text NOT NULL DEFAULT '',
+          "State" text NOT NULL DEFAULT '', "PostalCode" text NOT NULL DEFAULT '',
+          "ContactPerson" text NOT NULL DEFAULT '', "Mobile" text NOT NULL DEFAULT '', "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_DepotMasters_DepotCode" ON "DepotMasters" ("DepotCode");
+
+        CREATE TABLE IF NOT EXISTS "ServiceCentreMasters" (
+          "Id" uuid PRIMARY KEY, "CentreCode" text NOT NULL, "Name" text NOT NULL DEFAULT '',
+          "CentreType" text NOT NULL DEFAULT 'Company', "AddressLine1" text NOT NULL DEFAULT '',
+          "City" text NOT NULL DEFAULT '', "State" text NOT NULL DEFAULT '', "PostalCode" text NOT NULL DEFAULT '',
+          "ContactPerson" text NOT NULL DEFAULT '', "Mobile" text NOT NULL DEFAULT '', "WorkingHours" text NOT NULL DEFAULT '',
+          "BayCount" integer NOT NULL DEFAULT 0, "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_ServiceCentreMasters_CentreCode" ON "ServiceCentreMasters" ("CentreCode");
+    """);
+
+
+
+
+    // Reference master data from Montra Electric public product/contact pages. Idempotent by code.
+    if(!await db.ManufacturerMasters.AnyAsync(x=>x.ManufacturerCode=="MONTRA"))
+    {
+        db.ManufacturerMasters.Add(new ManufacturerMaster{
+            ManufacturerCode="MONTRA",Name="Montra Electric",Country="India",
+            WebsiteUrl="https://www.montraelectric.com/",ContactPhone="1800-833-3303",ContactEmail="customercare@montraelectric.com",IsActive=true});
+        await db.SaveChangesAsync();
+    }
+
+    var seedOptions = new [] {
+        new MasterOption{Category="VEHICLE_TYPE",Code="E3W",Name="Three Wheeler",Description="Super Auto / Super Cargo",SortOrder=10},
+        new MasterOption{Category="VEHICLE_TYPE",Code="ESCV",Name="Small Commercial Vehicle",Description="EVIATOR electric small commercial vehicle",SortOrder=20},
+        new MasterOption{Category="VEHICLE_TYPE",Code="EMHCV",Name="Medium & Heavy Commercial Vehicle",Description="Rhino / Tipper electric heavy commercial vehicles",SortOrder=30},
+        new MasterOption{Category="VEHICLE_TYPE",Code="ETRACTOR",Name="Electric Tractor",Description="Montra electric tractor range",SortOrder=40},
+        new MasterOption{Category="POWERTRAIN",Code="EV",Name="Battery Electric",Description="Battery electric vehicle",SortOrder=10},
+        new MasterOption{Category="OWNERSHIP_TYPE",Code="OWNED",Name="Owned",SortOrder=10},
+        new MasterOption{Category="OWNERSHIP_TYPE",Code="LEASED",Name="Leased",SortOrder=20},
+        new MasterOption{Category="PM_TRIGGER_TYPE",Code="ODOMETER",Name="Odometer",Value="KM",Description="Distance-based preventive maintenance trigger",SortOrder=10},
+        new MasterOption{Category="PM_TRIGGER_TYPE",Code="TIME",Name="Calendar / Time",Value="MONTH",Description="Calendar-based preventive maintenance trigger",SortOrder=20},
+        new MasterOption{Category="PM_TRIGGER_TYPE",Code="OPERATING_HOURS",Name="Operating Hours",Value="HOUR",Description="Operating-hour preventive maintenance trigger",SortOrder=30},
+        new MasterOption{Category="PM_TRIGGER_TYPE",Code="KWH",Name="Energy Used",Value="KWH",Description="Accumulated energy-used preventive maintenance trigger",SortOrder=40},
+        new MasterOption{Category="UNIT_OF_MEASURE",Code="KM",Name="Kilometre",Value="km",Description="Distance",SortOrder=10},
+        new MasterOption{Category="UNIT_OF_MEASURE",Code="HOUR",Name="Hour",Value="hr",Description="Operating time",SortOrder=20},
+        new MasterOption{Category="UNIT_OF_MEASURE",Code="KWH",Name="Kilowatt-hour",Value="kWh",Description="Energy",SortOrder=30},
+        new MasterOption{Category="UNIT_OF_MEASURE",Code="DAY",Name="Day",Value="day",Description="Calendar time",SortOrder=40},
+        new MasterOption{Category="UNIT_OF_MEASURE",Code="MONTH",Name="Month",Value="month",Description="Calendar time",SortOrder=50},
+        new MasterOption{Category="UNIT_OF_MEASURE",Code="YEAR",Name="Year",Value="year",Description="Calendar time",SortOrder=60},
+        new MasterOption{Category="UNIT_OF_MEASURE",Code="EA",Name="Each",Value="EA",Description="Parts quantity",SortOrder=70},
+        new MasterOption{Category="PRIORITY",Code="P1",Name="Critical",Value="1",Description="Immediate / vehicle-off-road priority",SortOrder=10},
+        new MasterOption{Category="PRIORITY",Code="P2",Name="High",Value="2",Description="High operational impact",SortOrder=20},
+        new MasterOption{Category="PRIORITY",Code="P3",Name="Normal",Value="3",Description="Normal workshop priority",SortOrder=30},
+        new MasterOption{Category="PRIORITY",Code="P4",Name="Low",Value="4",Description="Low urgency / planned work",SortOrder=40},
+        new MasterOption{Category="VEHICLE_STATUS",Code="AVAILABLE",Name="Available",Value="Available",Description="Vehicle available for operation",SortOrder=10},
+        new MasterOption{Category="VEHICLE_STATUS",Code="UNDER_MAINTENANCE",Name="Under Maintenance",Value="Downtime",Description="Vehicle currently under maintenance",SortOrder=20},
+        new MasterOption{Category="VEHICLE_STATUS",Code="OFF_HIRE",Name="Off-Hire",Value="Downtime",Description="Vehicle unavailable / off-hire",SortOrder=30},
+        new MasterOption{Category="VEHICLE_STATUS",Code="INACTIVE",Name="Inactive",Value="Inactive",Description="Vehicle not in active fleet",SortOrder=40},
+        new MasterOption{Category="TASK_CATEGORY",Code="INSPECTION",Name="Inspection",Description="Inspection / condition check",SortOrder=10},
+        new MasterOption{Category="TASK_CATEGORY",Code="PM_SERVICE",Name="Preventive Service",Description="Scheduled preventive maintenance task",SortOrder=20},
+        new MasterOption{Category="TASK_CATEGORY",Code="REPAIR",Name="Repair",Description="Corrective repair task",SortOrder=30},
+        new MasterOption{Category="TASK_CATEGORY",Code="DIAGNOSTIC",Name="Diagnostic",Description="Diagnostic / scan task",SortOrder=40},
+        new MasterOption{Category="TASK_CATEGORY",Code="ROAD_TEST",Name="Road Test",Description="Road test / functional verification",SortOrder=50},
+        new MasterOption{Category="SKILL",Code="EV",Name="EV General",Description="General electric-vehicle service skill",SortOrder=10},
+        new MasterOption{Category="SKILL",Code="HV",Name="High Voltage",Description="High-voltage authorized skill",SortOrder=20},
+        new MasterOption{Category="SKILL",Code="MECH",Name="Mechanical",Description="Mechanical service skill",SortOrder=30},
+        new MasterOption{Category="SKILL",Code="ELEC",Name="Electrical",Description="Electrical service skill",SortOrder=40},
+        new MasterOption{Category="SKILL",Code="DIAG",Name="Diagnostics",Description="Vehicle diagnostic skill",SortOrder=50},
+        new MasterOption{Category="DOCUMENT_TYPE",Code="REGISTRATION",Name="Registration Certificate",Value="Vehicle",Description="Vehicle registration document",SortOrder=10},
+        new MasterOption{Category="DOCUMENT_TYPE",Code="INSURANCE",Name="Insurance",Value="Vehicle",Description="Vehicle insurance document",SortOrder=20},
+        new MasterOption{Category="DOCUMENT_TYPE",Code="WARRANTY",Name="Warranty",Value="Vehicle",Description="Vehicle / battery warranty document",SortOrder=30},
+        new MasterOption{Category="DOCUMENT_TYPE",Code="PURCHASE_INVOICE",Name="Purchase Invoice",Value="Vehicle",Description="Vehicle purchase invoice",SortOrder=40},
+        new MasterOption{Category="DOCUMENT_TYPE",Code="SERVICE_REPORT",Name="Service Report",Value="Work Order",Description="Service completion report",SortOrder=50},
+        new MasterOption{Category="DOCUMENT_TYPE",Code="QC_REPORT",Name="QC / Release Report",Value="Work Order",Description="QC and release evidence",SortOrder=60}
+    };
+    foreach(var o in seedOptions)
+        if(!await db.MasterOptions.AnyAsync(x=>x.Category==o.Category&&x.Code==o.Code)) db.MasterOptions.Add(o);
+    await db.SaveChangesAsync();
+
+    async Task<VehicleModelMaster> EnsureModel(string code,string name,string type,string description="")
+    {
+        var m=await db.VehicleModelMasters.FirstOrDefaultAsync(x=>x.ModelCode==code);
+        if(m is null){m=new VehicleModelMaster{ModelCode=code,Name=name,ManufacturerCode="MONTRA",VehicleTypeCode=type,PowertrainCode="EV",IsActive=true};db.VehicleModelMasters.Add(m);await db.SaveChangesAsync();}
+        return m;
+    }
+    async Task EnsureVariant(VehicleModelMaster m,string code,string name,decimal? battery=null,string config="")
+    {
+        if(!await db.VehicleVariantMasters.AnyAsync(x=>x.VehicleModelMasterId==m.Id&&x.VariantCode==code))
+        {db.VehicleVariantMasters.Add(new VehicleVariantMaster{VehicleModelMasterId=m.Id,VariantCode=code,Name=name,BatteryCapacityKwh=battery,Configuration=config,IsActive=true});await db.SaveChangesAsync();}
+    }
+
+    var superAuto=await EnsureModel("SUPER_AUTO","Super Auto","E3W");
+    var superCargo=await EnsureModel("SUPER_CARGO","Super Cargo","E3W");
+    var eviator=await EnsureModel("EVIATOR","EVIATOR","ESCV");
+    var rhino=await EnsureModel("RHINO_5538_EV","Rhino 5538 EV","EMHCV");
+    var tipper=await EnsureModel("TIPPER_2868_EV","Tipper 2868 EV","EMHCV");
+    var tractor27=await EnsureModel("TRACTOR_E27","Tractor e-27","ETRACTOR");
+    var tractor45=await EnsureModel("TRACTOR_E45","Tractor e-45","ETRACTOR");
+
+    // Ten public product/variant references from Montra Electric portfolio.
+    await EnsureVariant(superCargo,"ECX","eCX",null,"Super Cargo");
+    await EnsureVariant(superCargo,"ECX_DPLUS","eCX d+",null,"Super Cargo");
+    await EnsureVariant(superCargo,"EQX","eQX",null,"Super Cargo");
+    await EnsureVariant(superCargo,"EQX_DPLUS","eQX d+",null,"Super Cargo");
+    await EnsureVariant(eviator,"EVIATOR_350_32","EVIATOR 350 (32 kWh)",32,"Urban / short-distance");
+    await EnsureVariant(eviator,"EVIATOR_40","EVIATOR (40 kWh)",40,"Core EVIATOR");
+    await EnsureVariant(eviator,"EVIATOR_350L_50","EVIATOR 350L+ (50 kWh)",50,"Long-distance / intercity");
+    await EnsureVariant(rhino,"RHINO_5538_4X2","Rhino 5538 EV 4x2",null,"4x2");
+    await EnsureVariant(rhino,"RHINO_5538_6X4","Rhino 5538 EV 6x4",null,"6x4");
+    await EnsureVariant(tipper,"TIPPER_2868_6X4","Tipper 2868 EV 6x4",null,"6x4 Tipper");
+
     if (!await db.InventoryLocations.AnyAsync())
     {
         db.InventoryLocations.Add(new InventoryLocation { LocationCode="MAIN-STORE", Name="Main Parts Store", ServiceCentre="Chennai Service Centre", Bin="GENERAL" });
@@ -258,11 +391,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.6" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.6.3" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.6" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.6.3" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -270,7 +403,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.6" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.6.3" });
 });
 
 static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
@@ -391,6 +524,77 @@ app.MapPost("/api/pm/vehicle-variants", async (VehicleVariantMaster r,AppDbConte
     r.Id=Guid.NewGuid();r.VariantCode=r.VariantCode.Trim().ToUpperInvariant();if(!await db.VehicleModelMasters.AnyAsync(x=>x.Id==r.VehicleModelMasterId))return Results.BadRequest(new{message="Vehicle model not found."});
     if(await db.VehicleVariantMasters.AnyAsync(x=>x.VehicleModelMasterId==r.VehicleModelMasterId&&x.VariantCode==r.VariantCode))return Results.Conflict(new{message="Variant code already exists for the model."});
     db.VehicleVariantMasters.Add(r);await db.SaveChangesAsync();return Results.Ok(r);
+});
+
+app.MapPut("/api/pm/vehicle-variants/{id:guid}", async (Guid id,VehicleVariantMaster r,AppDbContext db)=>
+{
+    var x=await db.VehicleVariantMasters.FindAsync(id);if(x is null)return Results.NotFound();
+    if(x.VehicleModelMasterId!=r.VehicleModelMasterId && !await db.VehicleModelMasters.AnyAsync(m=>m.Id==r.VehicleModelMasterId))return Results.BadRequest(new{message="Vehicle model not found."});
+    x.VehicleModelMasterId=r.VehicleModelMasterId;x.Name=r.Name;x.ImageUrl=r.ImageUrl;x.GvwKg=r.GvwKg;x.PayloadKg=r.PayloadKg;
+    x.BatteryCapacityKwh=r.BatteryCapacityKwh;x.MotorPowerKw=r.MotorPowerKw;x.WheelbaseMm=r.WheelbaseMm;x.Configuration=r.Configuration;
+    x.EffectiveFrom=r.EffectiveFrom;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
+});
+
+
+app.MapGet("/api/pm/manufacturers", async (AppDbContext db) => Results.Ok(await db.ManufacturerMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
+app.MapPost("/api/pm/manufacturers", async (ManufacturerMaster r,AppDbContext db)=>
+{
+    r.Id=Guid.NewGuid();r.ManufacturerCode=r.ManufacturerCode.Trim().ToUpperInvariant();
+    if(string.IsNullOrWhiteSpace(r.ManufacturerCode)||string.IsNullOrWhiteSpace(r.Name))return Results.BadRequest(new{message="Manufacturer code and name are required."});
+    if(await db.ManufacturerMasters.AnyAsync(x=>x.ManufacturerCode==r.ManufacturerCode))return Results.Conflict(new{message="Manufacturer code already exists."});
+    db.ManufacturerMasters.Add(r);Audit(db,"CREATE","ManufacturerMaster",r.Id,r.ManufacturerCode);await db.SaveChangesAsync();return Results.Ok(r);
+});
+app.MapPut("/api/pm/manufacturers/{id:guid}", async (Guid id,ManufacturerMaster r,AppDbContext db)=>
+{
+    var x=await db.ManufacturerMasters.FindAsync(id);if(x is null)return Results.NotFound();
+    x.Name=r.Name;x.Country=r.Country;x.WebsiteUrl=r.WebsiteUrl;x.ContactPhone=r.ContactPhone;x.ContactEmail=r.ContactEmail;x.IsActive=r.IsActive;
+    await db.SaveChangesAsync();return Results.Ok(x);
+});
+
+app.MapGet("/api/pm/customers", async (AppDbContext db) => Results.Ok(await db.CustomerMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
+app.MapPost("/api/pm/customers", async (CustomerMaster r,AppDbContext db)=>
+{
+    r.Id=Guid.NewGuid();r.CustomerCode=r.CustomerCode.Trim().ToUpperInvariant();
+    if(string.IsNullOrWhiteSpace(r.CustomerCode)||string.IsNullOrWhiteSpace(r.Name))return Results.BadRequest(new{message="Customer code and name are required."});
+    if(await db.CustomerMasters.AnyAsync(x=>x.CustomerCode==r.CustomerCode))return Results.Conflict(new{message="Customer code already exists."});
+    db.CustomerMasters.Add(r);Audit(db,"CREATE","CustomerMaster",r.Id,r.CustomerCode);await db.SaveChangesAsync();return Results.Ok(r);
+});
+app.MapPut("/api/pm/customers/{id:guid}", async (Guid id,CustomerMaster r,AppDbContext db)=>
+{
+    var x=await db.CustomerMasters.FindAsync(id);if(x is null)return Results.NotFound();
+    x.Name=r.Name;x.AddressLine1=r.AddressLine1;x.AddressLine2=r.AddressLine2;x.City=r.City;x.State=r.State;x.PostalCode=r.PostalCode;x.Country=r.Country;
+    x.Gstin=r.Gstin;x.ContactPerson=r.ContactPerson;x.Mobile=r.Mobile;x.Email=r.Email;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
+});
+
+app.MapGet("/api/pm/depots", async (AppDbContext db) => Results.Ok(await db.DepotMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
+app.MapPost("/api/pm/depots", async (DepotMaster r,AppDbContext db)=>
+{
+    r.Id=Guid.NewGuid();r.DepotCode=r.DepotCode.Trim().ToUpperInvariant();
+    if(string.IsNullOrWhiteSpace(r.DepotCode)||string.IsNullOrWhiteSpace(r.Name))return Results.BadRequest(new{message="Depot code and name are required."});
+    if(r.CustomerMasterId.HasValue&&!await db.CustomerMasters.AnyAsync(x=>x.Id==r.CustomerMasterId))return Results.BadRequest(new{message="Customer not found."});
+    if(await db.DepotMasters.AnyAsync(x=>x.DepotCode==r.DepotCode))return Results.Conflict(new{message="Depot code already exists."});
+    db.DepotMasters.Add(r);await db.SaveChangesAsync();return Results.Ok(r);
+});
+app.MapPut("/api/pm/depots/{id:guid}", async (Guid id,DepotMaster r,AppDbContext db)=>
+{
+    var x=await db.DepotMasters.FindAsync(id);if(x is null)return Results.NotFound();
+    x.Name=r.Name;x.CustomerMasterId=r.CustomerMasterId;x.AddressLine1=r.AddressLine1;x.City=r.City;x.State=r.State;x.PostalCode=r.PostalCode;
+    x.ContactPerson=r.ContactPerson;x.Mobile=r.Mobile;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
+});
+
+app.MapGet("/api/pm/service-centres", async (AppDbContext db) => Results.Ok(await db.ServiceCentreMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
+app.MapPost("/api/pm/service-centres", async (ServiceCentreMaster r,AppDbContext db)=>
+{
+    r.Id=Guid.NewGuid();r.CentreCode=r.CentreCode.Trim().ToUpperInvariant();
+    if(string.IsNullOrWhiteSpace(r.CentreCode)||string.IsNullOrWhiteSpace(r.Name))return Results.BadRequest(new{message="Service centre code and name are required."});
+    if(await db.ServiceCentreMasters.AnyAsync(x=>x.CentreCode==r.CentreCode))return Results.Conflict(new{message="Service centre code already exists."});
+    db.ServiceCentreMasters.Add(r);await db.SaveChangesAsync();return Results.Ok(r);
+});
+app.MapPut("/api/pm/service-centres/{id:guid}", async (Guid id,ServiceCentreMaster r,AppDbContext db)=>
+{
+    var x=await db.ServiceCentreMasters.FindAsync(id);if(x is null)return Results.NotFound();
+    x.Name=r.Name;x.CentreType=r.CentreType;x.AddressLine1=r.AddressLine1;x.City=r.City;x.State=r.State;x.PostalCode=r.PostalCode;
+    x.ContactPerson=r.ContactPerson;x.Mobile=r.Mobile;x.WorkingHours=r.WorkingHours;x.BayCount=r.BayCount;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
 });
 
 app.MapGet("/api/pm/programs", async (AppDbContext db) => Results.Ok(await db.MaintenancePrograms.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
