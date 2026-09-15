@@ -1,0 +1,4 @@
+-- AU-Fleet-Ops v1.6 configurable PM and vehicle enrollment
+-- Runtime applies these changes idempotently from Program.cs.
+-- New masters: MasterOptions, VehicleModelMasters, VehicleVariantMasters, MaintenancePrograms, MaintenancePlans, MaintenancePlanTriggers, MaintenancePlanTasks.
+-- Vehicle enrollment fields and PM trigger metrics are added additively; existing fleet data is preserved.

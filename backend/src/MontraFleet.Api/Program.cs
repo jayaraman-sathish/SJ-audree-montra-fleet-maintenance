@@ -45,6 +45,81 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.EnsureCreatedAsync();
     await db.Database.ExecuteSqlRawAsync("""
+        CREATE TABLE IF NOT EXISTS "MasterOptions" (
+          "Id" uuid PRIMARY KEY, "Category" text NOT NULL, "Code" text NOT NULL, "Name" text NOT NULL,
+          "Value" text NOT NULL DEFAULT '', "Description" text NOT NULL DEFAULT '', "SortOrder" integer NOT NULL DEFAULT 0, "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_MasterOptions_Category_Code" ON "MasterOptions" ("Category","Code");
+
+        CREATE TABLE IF NOT EXISTS "VehicleModelMasters" (
+          "Id" uuid PRIMARY KEY, "ModelCode" text NOT NULL, "Name" text NOT NULL, "ManufacturerCode" text NOT NULL DEFAULT '',
+          "VehicleTypeCode" text NOT NULL DEFAULT '', "PowertrainCode" text NOT NULL DEFAULT '', "ImageUrl" text NOT NULL DEFAULT '',
+          "GvwKg" numeric(18,2) NULL, "BatteryCapacityKwh" numeric(18,2) NULL, "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_VehicleModelMasters_ModelCode" ON "VehicleModelMasters" ("ModelCode");
+
+        CREATE TABLE IF NOT EXISTS "VehicleVariantMasters" (
+          "Id" uuid PRIMARY KEY, "VehicleModelMasterId" uuid NOT NULL, "VariantCode" text NOT NULL, "Name" text NOT NULL,
+          "ImageUrl" text NOT NULL DEFAULT '', "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_VehicleVariantMasters_Model_Variant" ON "VehicleVariantMasters" ("VehicleModelMasterId","VariantCode");
+
+        CREATE TABLE IF NOT EXISTS "MaintenancePrograms" (
+          "Id" uuid PRIMARY KEY, "ProgramCode" text NOT NULL, "Name" text NOT NULL, "Description" text NOT NULL DEFAULT '',
+          "VehicleModelMasterId" uuid NULL, "VehicleVariantMasterId" uuid NULL, "EffectiveFrom" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "EffectiveTo" timestamptz NULL, "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenancePrograms_ProgramCode" ON "MaintenancePrograms" ("ProgramCode");
+
+        CREATE TABLE IF NOT EXISTS "MaintenancePlans" (
+          "Id" uuid PRIMARY KEY, "MaintenanceProgramId" uuid NOT NULL, "PlanCode" text NOT NULL, "Name" text NOT NULL,
+          "Description" text NOT NULL DEFAULT '', "RecurrenceBasis" text NOT NULL DEFAULT 'Completion', "Sequence" integer NOT NULL DEFAULT 0,
+          "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenancePlans_Program_Plan" ON "MaintenancePlans" ("MaintenanceProgramId","PlanCode");
+
+        CREATE TABLE IF NOT EXISTS "MaintenancePlanTriggers" (
+          "Id" uuid PRIMARY KEY, "MaintenancePlanId" uuid NOT NULL, "TriggerCode" text NOT NULL DEFAULT 'ODOMETER',
+          "IntervalValue" numeric(18,2) NOT NULL DEFAULT 0, "InitialDueValue" numeric(18,2) NULL, "UnitCode" text NOT NULL DEFAULT '',
+          "WarningValue" numeric(18,2) NOT NULL DEFAULT 0, "ToleranceValue" numeric(18,2) NOT NULL DEFAULT 0, "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenancePlanTriggers_Plan_Trigger" ON "MaintenancePlanTriggers" ("MaintenancePlanId","TriggerCode");
+
+        CREATE TABLE IF NOT EXISTS "MaintenancePlanTasks" (
+          "Id" uuid PRIMARY KEY, "MaintenancePlanId" uuid NOT NULL, "ServiceTaskMasterId" uuid NOT NULL,
+          "Sequence" integer NOT NULL DEFAULT 0, "IsMandatory" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenancePlanTasks_Plan_Task" ON "MaintenancePlanTasks" ("MaintenancePlanId","ServiceTaskMasterId");
+
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "VehicleTypeCode" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "ManufacturerCode" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "ModelMasterId" uuid NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "VariantMasterId" uuid NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "ImageUrl" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "MotorNumber" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "PurchaseDate" timestamptz NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "PurchaseCost" numeric(18,2) NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "InvoiceNumber" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "DealerName" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "CommissioningDate" timestamptz NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "RegistrationDate" timestamptz NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "RegistrationExpiry" timestamptz NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "InsuranceNumber" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "InsuranceStartDate" timestamptz NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "InsuranceExpiryDate" timestamptz NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "WarrantyStartDate" timestamptz NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "WarrantyExpiryDate" timestamptz NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "BatteryWarrantyStartDate" timestamptz NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "BatteryWarrantyExpiryDate" timestamptz NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "DepotCode" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "ServiceCentreCode" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "CustomerCode" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "OwnershipTypeCode" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "MaintenanceProgramId" uuid NULL;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "Remarks" text NOT NULL DEFAULT '';
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "EnergyKwh" numeric(18,2) NOT NULL DEFAULT 0;
+        ALTER TABLE "Vehicles" ADD COLUMN IF NOT EXISTS "IsActive" boolean NOT NULL DEFAULT true;
+
+        ALTER TABLE "PmObligations" ADD COLUMN IF NOT EXISTS "MaintenancePlanId" uuid NULL;
+        ALTER TABLE "PmObligations" ADD COLUMN IF NOT EXISTS "DueOperatingHours" numeric(18,2) NULL;
+        ALTER TABLE "PmObligations" ADD COLUMN IF NOT EXISTS "DueEnergyKwh" numeric(18,2) NULL;
+        ALTER TABLE "PmObligations" ADD COLUMN IF NOT EXISTS "CompletedAt" timestamptz NULL;
+        ALTER TABLE "ServiceEvents" ADD COLUMN IF NOT EXISTS "PmObligationId" uuid NULL;
+    """);
+    await db.Database.ExecuteSqlRawAsync("""
         CREATE TABLE IF NOT EXISTS "MaintenanceRequests" (
           "Id" uuid PRIMARY KEY, "RequestNumber" text NOT NULL, "VehicleId" uuid NOT NULL, "SourceType" text NOT NULL DEFAULT 'Manual',
           "SourceReference" text NOT NULL DEFAULT '', "RequestType" text NOT NULL DEFAULT 'Repair', "Priority" text NOT NULL DEFAULT 'P3',
@@ -183,11 +258,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.5.3" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.6" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.5.3" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.6" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -195,8 +270,70 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.5.3" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.6" });
 });
+
+static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
+{
+    if(interval<=0)return current;
+    var first=initialDue.HasValue && initialDue.Value>0 ? initialDue.Value : interval;
+    if(current < first)return first;
+    var steps=Math.Floor((current-first)/interval)+1;
+    return first+(steps*interval);
+}
+
+static DateTime NextTimeDue(DateTime basis, decimal? initialDue, decimal interval, string unit)
+{
+    var amount=(int)Math.Ceiling(initialDue.HasValue&&initialDue.Value>0?initialDue.Value:interval);
+    if(amount<=0)amount=1;
+    return unit.ToUpperInvariant() switch { "DAY" or "DAYS" => basis.AddDays(amount), "YEAR" or "YEARS" => basis.AddYears(amount), _ => basis.AddMonths(amount) };
+}
+
+static async Task EnsurePmObligationsAsync(AppDbContext db, Vehicle v)
+{
+    if(!v.MaintenanceProgramId.HasValue)return;
+    var plans=await db.MaintenancePlans.Where(x=>x.MaintenanceProgramId==v.MaintenanceProgramId.Value&&x.IsActive).OrderBy(x=>x.Sequence).ToListAsync();
+    foreach(var plan in plans)
+    {
+        if(await db.PmObligations.AnyAsync(x=>x.VehicleId==v.Id&&x.MaintenancePlanId==plan.Id&&x.Status!="Completed"))continue;
+        var triggers=await db.MaintenancePlanTriggers.Where(x=>x.MaintenancePlanId==plan.Id&&x.IsActive).ToListAsync();
+        if(triggers.Count==0)continue;
+        var o=new PmObligation{VehicleId=v.Id,MaintenancePlanId=plan.Id,PlanCode=plan.PlanCode,TriggerType=string.Join(" / ",triggers.Select(x=>x.TriggerCode)),Status="Upcoming",GeneratedAt=DateTime.UtcNow};
+        foreach(var t in triggers)
+        {
+            switch(t.TriggerCode.ToUpperInvariant())
+            {
+                case "ODOMETER": o.DueReading=NextMetricDue(v.OdometerKm,t.InitialDueValue,t.IntervalValue);break;
+                case "OPERATING_HOURS": o.DueOperatingHours=NextMetricDue(v.OperatingHours,t.InitialDueValue,t.IntervalValue);break;
+                case "KWH": o.DueEnergyKwh=NextMetricDue(v.EnergyKwh,t.InitialDueValue,t.IntervalValue);break;
+                case "TIME": o.DueDate=NextTimeDue((v.CommissioningDate??v.PurchaseDate??DateTime.UtcNow).Date,t.InitialDueValue,t.IntervalValue,t.UnitCode);break;
+            }
+        }
+        db.PmObligations.Add(o);
+    }
+    await db.SaveChangesAsync();
+}
+
+static async Task GenerateNextPmObligationAsync(AppDbContext db, PmObligation completed, Vehicle v)
+{
+    if(!completed.MaintenancePlanId.HasValue)return;
+    var plan=await db.MaintenancePlans.FindAsync(completed.MaintenancePlanId.Value);if(plan is null||!plan.IsActive)return;
+    var triggers=await db.MaintenancePlanTriggers.Where(x=>x.MaintenancePlanId==plan.Id&&x.IsActive).ToListAsync();
+    var o=new PmObligation{VehicleId=v.Id,MaintenancePlanId=plan.Id,PlanCode=plan.PlanCode,TriggerType=string.Join(" / ",triggers.Select(x=>x.TriggerCode)),Status="Upcoming",GeneratedAt=DateTime.UtcNow};
+    foreach(var t in triggers)
+    {
+        switch(t.TriggerCode.ToUpperInvariant())
+        {
+            case "ODOMETER": o.DueReading=(plan.RecurrenceBasis=="ScheduledDue"&&completed.DueReading.HasValue?completed.DueReading.Value:v.OdometerKm)+t.IntervalValue;break;
+            case "OPERATING_HOURS": o.DueOperatingHours=(plan.RecurrenceBasis=="ScheduledDue"&&completed.DueOperatingHours.HasValue?completed.DueOperatingHours.Value:v.OperatingHours)+t.IntervalValue;break;
+            case "KWH": o.DueEnergyKwh=(plan.RecurrenceBasis=="ScheduledDue"&&completed.DueEnergyKwh.HasValue?completed.DueEnergyKwh.Value:v.EnergyKwh)+t.IntervalValue;break;
+            case "TIME":
+                var basis=plan.RecurrenceBasis=="ScheduledDue"&&completed.DueDate.HasValue?completed.DueDate.Value:DateTime.UtcNow;
+                o.DueDate=NextTimeDue(basis,null,t.IntervalValue,t.UnitCode);break;
+        }
+    }
+    completed.SupersededById=o.Id;db.PmObligations.Add(o);await db.SaveChangesAsync();
+}
 
 app.MapGet("/api/dashboard/summary", async (AppDbContext db) =>
 {
@@ -213,48 +350,106 @@ app.MapGet("/api/dashboard/summary", async (AppDbContext db) =>
 });
 
 app.MapGet("/api/vehicles", async (AppDbContext db) =>
-    Results.Ok(await db.Vehicles.AsNoTracking().OrderBy(x=>x.RegistrationNumber).ToListAsync()));
+    Results.Ok(await db.Vehicles.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.RegistrationNumber).ToListAsync()));
 
 app.MapPost("/api/vehicles", async (Vehicle vehicle, AppDbContext db) =>
 {
-    if (string.IsNullOrWhiteSpace(vehicle.Vin) || string.IsNullOrWhiteSpace(vehicle.RegistrationNumber))
-        return Results.BadRequest(new { message="VIN and registration are required." });
-    if (await db.Vehicles.AnyAsync(x => x.Vin == vehicle.Vin))
-        return Results.Conflict(new { message="VIN already exists." });
-    db.Vehicles.Add(vehicle); Audit(db,"CREATE","Vehicle",vehicle.Id,vehicle.RegistrationNumber);
-    await db.SaveChangesAsync();
-    return Results.Created($"/api/vehicles/{vehicle.Id}", vehicle);
+    if(await db.Vehicles.AnyAsync(x=>x.Vin==vehicle.Vin || x.RegistrationNumber==vehicle.RegistrationNumber))return Results.Conflict(new{message="VIN or registration number already exists."});
+    db.Vehicles.Add(vehicle);await db.SaveChangesAsync();await EnsurePmObligationsAsync(db,vehicle);return Results.Created($"/api/vehicles/{vehicle.Id}",vehicle);
 });
-
 app.MapPut("/api/vehicles/{id:guid}", async (Guid id, Vehicle input, AppDbContext db) =>
 {
-    var v = await db.Vehicles.FindAsync(id); if (v is null) return Results.NotFound();
-    v.RegistrationNumber=input.RegistrationNumber; v.Model=input.Model; v.Variant=input.Variant;
-    v.Status=input.Status; v.OdometerKm=input.OdometerKm; v.OperatingHours=input.OperatingHours; v.BatterySoc=input.BatterySoc;
-    Audit(db,"UPDATE","Vehicle",v.Id,v.RegistrationNumber); await db.SaveChangesAsync(); return Results.Ok(v);
+    var v=await db.Vehicles.FindAsync(id);if(v is null)return Results.NotFound();
+    db.Entry(v).CurrentValues.SetValues(input);v.Id=id;await db.SaveChangesAsync();await EnsurePmObligationsAsync(db,v);return Results.Ok(v);
 });
 
-app.MapGet("/api/pm/obligations", async (AppDbContext db) =>
+app.MapGet("/api/pm/master-options", async (AppDbContext db) => Results.Ok(await db.MasterOptions.AsNoTracking().OrderBy(x=>x.Category).ThenBy(x=>x.SortOrder).ThenBy(x=>x.Name).ToListAsync()));
+app.MapPost("/api/pm/master-options", async (MasterOption r, AppDbContext db) =>
 {
-    var rows = await (from p in db.PmObligations.AsNoTracking()
-                      join v in db.Vehicles.AsNoTracking() on p.VehicleId equals v.Id
-                      orderby p.GeneratedAt descending
-                      select new { p.Id, p.VehicleId, vehicle=v.RegistrationNumber, plan=p.PlanCode, trigger=p.TriggerType, p.DueDate, p.DueReading, p.Status,
-                          remaining = p.TriggerType=="Odometer" && p.DueReading!=null ? (p.DueReading-v.OdometerKm)+" km" :
-                                      p.DueDate!=null ? (p.DueDate.Value.Date-DateTime.UtcNow.Date).Days+" days" : "-" }).ToListAsync();
-    return Results.Ok(rows);
+    r.Id=Guid.NewGuid();r.Category=r.Category.Trim().ToUpperInvariant();r.Code=r.Code.Trim().ToUpperInvariant();
+    if(await db.MasterOptions.AnyAsync(x=>x.Category==r.Category&&x.Code==r.Code))return Results.Conflict(new{message="This code already exists in the selected master."});
+    db.MasterOptions.Add(r);Audit(db,"CREATE","MasterOption",r.Id,$"{r.Category}:{r.Code}");await db.SaveChangesAsync();return Results.Ok(r);
+});
+app.MapPut("/api/pm/master-options/{id:guid}", async (Guid id,MasterOption r,AppDbContext db)=>
+{
+    var x=await db.MasterOptions.FindAsync(id);if(x is null)return Results.NotFound();x.Name=r.Name;x.Value=r.Value;x.Description=r.Description;x.SortOrder=r.SortOrder;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
 });
 
+app.MapGet("/api/pm/vehicle-models", async (AppDbContext db) => Results.Ok(await db.VehicleModelMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
+app.MapPost("/api/pm/vehicle-models", async (VehicleModelMaster r, AppDbContext db) =>
+{
+    r.Id=Guid.NewGuid();r.ModelCode=r.ModelCode.Trim().ToUpperInvariant();if(await db.VehicleModelMasters.AnyAsync(x=>x.ModelCode==r.ModelCode))return Results.Conflict(new{message="Model code already exists."});
+    db.VehicleModelMasters.Add(r);Audit(db,"CREATE","VehicleModelMaster",r.Id,r.ModelCode);await db.SaveChangesAsync();return Results.Ok(r);
+});
+app.MapPut("/api/pm/vehicle-models/{id:guid}", async (Guid id,VehicleModelMaster r,AppDbContext db)=>
+{
+    var x=await db.VehicleModelMasters.FindAsync(id);if(x is null)return Results.NotFound();x.Name=r.Name;x.ManufacturerCode=r.ManufacturerCode;x.VehicleTypeCode=r.VehicleTypeCode;x.PowertrainCode=r.PowertrainCode;x.ImageUrl=r.ImageUrl;x.GvwKg=r.GvwKg;x.BatteryCapacityKwh=r.BatteryCapacityKwh;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
+});
+app.MapGet("/api/pm/vehicle-variants", async (AppDbContext db) => Results.Ok(await db.VehicleVariantMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
+app.MapPost("/api/pm/vehicle-variants", async (VehicleVariantMaster r,AppDbContext db)=>
+{
+    r.Id=Guid.NewGuid();r.VariantCode=r.VariantCode.Trim().ToUpperInvariant();if(!await db.VehicleModelMasters.AnyAsync(x=>x.Id==r.VehicleModelMasterId))return Results.BadRequest(new{message="Vehicle model not found."});
+    if(await db.VehicleVariantMasters.AnyAsync(x=>x.VehicleModelMasterId==r.VehicleModelMasterId&&x.VariantCode==r.VariantCode))return Results.Conflict(new{message="Variant code already exists for the model."});
+    db.VehicleVariantMasters.Add(r);await db.SaveChangesAsync();return Results.Ok(r);
+});
+
+app.MapGet("/api/pm/programs", async (AppDbContext db) => Results.Ok(await db.MaintenancePrograms.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
+app.MapPost("/api/pm/programs", async (MaintenanceProgram r,AppDbContext db)=>
+{
+    r.Id=Guid.NewGuid();r.ProgramCode=r.ProgramCode.Trim().ToUpperInvariant();if(await db.MaintenancePrograms.AnyAsync(x=>x.ProgramCode==r.ProgramCode))return Results.Conflict(new{message="Program code already exists."});db.MaintenancePrograms.Add(r);await db.SaveChangesAsync();return Results.Ok(r);
+});
+app.MapPut("/api/pm/programs/{id:guid}",async(Guid id,MaintenanceProgram r,AppDbContext db)=>{var x=await db.MaintenancePrograms.FindAsync(id);if(x is null)return Results.NotFound();x.Name=r.Name;x.Description=r.Description;x.VehicleModelMasterId=r.VehicleModelMasterId;x.VehicleVariantMasterId=r.VehicleVariantMasterId;x.EffectiveFrom=r.EffectiveFrom;x.EffectiveTo=r.EffectiveTo;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);});
+
+app.MapGet("/api/pm/plans", async (AppDbContext db) =>
+{
+    var plans=await db.MaintenancePlans.AsNoTracking().OrderBy(x=>x.Sequence).ThenBy(x=>x.PlanCode).ToListAsync();var triggers=await db.MaintenancePlanTriggers.AsNoTracking().ToListAsync();var tasks=await db.MaintenancePlanTasks.AsNoTracking().ToListAsync();
+    return Results.Ok(plans.Select(x=>new{x.Id,x.MaintenanceProgramId,x.PlanCode,x.Name,x.Description,x.RecurrenceBasis,x.Sequence,x.IsActive,triggers=triggers.Where(t=>t.MaintenancePlanId==x.Id),taskCount=tasks.Count(t=>t.MaintenancePlanId==x.Id)}));
+});
+app.MapPost("/api/pm/plans",async(MaintenancePlan r,AppDbContext db)=>{r.Id=Guid.NewGuid();r.PlanCode=r.PlanCode.Trim().ToUpperInvariant();if(!await db.MaintenancePrograms.AnyAsync(x=>x.Id==r.MaintenanceProgramId))return Results.BadRequest(new{message="Maintenance program not found."});if(await db.MaintenancePlans.AnyAsync(x=>x.MaintenanceProgramId==r.MaintenanceProgramId&&x.PlanCode==r.PlanCode))return Results.Conflict(new{message="Plan code already exists in this program."});db.MaintenancePlans.Add(r);await db.SaveChangesAsync();return Results.Ok(r);});
+app.MapPost("/api/pm/plans/{id:guid}/trigger",async(Guid id,MaintenancePlanTrigger r,AppDbContext db)=>{if(!await db.MaintenancePlans.AnyAsync(x=>x.Id==id))return Results.NotFound();var code=r.TriggerCode.Trim().ToUpperInvariant();var x=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(t=>t.MaintenancePlanId==id&&t.TriggerCode==code);if(x is null){x=new MaintenancePlanTrigger{MaintenancePlanId=id,TriggerCode=code};db.MaintenancePlanTriggers.Add(x);}x.IntervalValue=r.IntervalValue;x.InitialDueValue=r.InitialDueValue;x.UnitCode=r.UnitCode;x.WarningValue=r.WarningValue;x.ToleranceValue=r.ToleranceValue;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);});
+app.MapPost("/api/pm/plans/{id:guid}/task",async(Guid id,MaintenancePlanTask r,AppDbContext db)=>{if(!await db.MaintenancePlans.AnyAsync(x=>x.Id==id)||!await db.ServiceTaskMasters.AnyAsync(x=>x.Id==r.ServiceTaskMasterId))return Results.BadRequest();var x=await db.MaintenancePlanTasks.FirstOrDefaultAsync(t=>t.MaintenancePlanId==id&&t.ServiceTaskMasterId==r.ServiceTaskMasterId);if(x is null){x=new MaintenancePlanTask{MaintenancePlanId=id,ServiceTaskMasterId=r.ServiceTaskMasterId};db.MaintenancePlanTasks.Add(x);}x.Sequence=r.Sequence;x.IsMandatory=r.IsMandatory;await db.SaveChangesAsync();return Results.Ok(x);});
+app.MapDelete("/api/pm/plans/{planId:guid}/task/{mappingId:guid}",async(Guid planId,Guid mappingId,AppDbContext db)=>{var x=await db.MaintenancePlanTasks.FirstOrDefaultAsync(t=>t.Id==mappingId&&t.MaintenancePlanId==planId);if(x is null)return Results.NotFound();db.MaintenancePlanTasks.Remove(x);await db.SaveChangesAsync();return Results.NoContent();});
+app.MapGet("/api/pm/plans/{id:guid}/tasks",async(Guid id,AppDbContext db)=>
+{
+    var rows=await(from m in db.MaintenancePlanTasks.AsNoTracking() join t in db.ServiceTaskMasters.AsNoTracking() on m.ServiceTaskMasterId equals t.Id where m.MaintenancePlanId==id orderby m.Sequence select new{m.Id,m.Sequence,m.IsMandatory,m.ServiceTaskMasterId,t.TaskCode,t.Name,t.StandardHours,t.RequiredSkillCode,t.RequiresHvAuthorization,t.RequiresQc,t.ChecklistCode}).ToListAsync();return Results.Ok(rows);
+});
+
+app.MapGet("/api/pm/enrollments",async(AppDbContext db)=>Results.Ok(await db.Vehicles.AsNoTracking().OrderBy(x=>x.RegistrationNumber).Select(v=>new{v.Id,v.RegistrationNumber,v.Vin,v.Model,v.Variant,v.ImageUrl,v.PurchaseDate,v.CommissioningDate,v.OdometerKm,v.OperatingHours,v.EnergyKwh,v.Status,v.MaintenanceProgramId,v.DepotCode,v.ServiceCentreCode,v.CustomerCode}).ToListAsync()));
+app.MapPost("/api/pm/enroll",async(VehicleEnrollmentRequest r,AppDbContext db)=>
+{
+    if(await db.Vehicles.AnyAsync(x=>x.Vin==r.Vin||x.RegistrationNumber==r.RegistrationNumber))return Results.Conflict(new{message="VIN or registration number already exists."});
+    var model=await db.VehicleModelMasters.FindAsync(r.ModelMasterId);if(model is null)return Results.BadRequest(new{message="Vehicle model is required."});
+    VehicleVariantMaster? variant=null;if(r.VariantMasterId.HasValue){variant=await db.VehicleVariantMasters.FindAsync(r.VariantMasterId.Value);if(variant is null||variant.VehicleModelMasterId!=model.Id)return Results.BadRequest(new{message="Selected variant does not belong to the model."});}
+    var v=new Vehicle{Vin=r.Vin.Trim(),RegistrationNumber=r.RegistrationNumber.Trim().ToUpperInvariant(),Model=model.Name,Variant=variant?.Name??"",VehicleTypeCode=model.VehicleTypeCode,ManufacturerCode=model.ManufacturerCode,ModelMasterId=model.Id,VariantMasterId=variant?.Id,ImageUrl=string.IsNullOrWhiteSpace(r.ImageUrl)?(variant?.ImageUrl??model.ImageUrl):r.ImageUrl,MotorNumber=r.MotorNumber,PurchaseDate=r.PurchaseDate,PurchaseCost=r.PurchaseCost,InvoiceNumber=r.InvoiceNumber,DealerName=r.DealerName,CommissioningDate=r.CommissioningDate,RegistrationDate=r.RegistrationDate,RegistrationExpiry=r.RegistrationExpiry,InsuranceNumber=r.InsuranceNumber,InsuranceStartDate=r.InsuranceStartDate,InsuranceExpiryDate=r.InsuranceExpiryDate,WarrantyStartDate=r.WarrantyStartDate,WarrantyExpiryDate=r.WarrantyExpiryDate,BatteryWarrantyStartDate=r.BatteryWarrantyStartDate,BatteryWarrantyExpiryDate=r.BatteryWarrantyExpiryDate,OdometerKm=r.OdometerKm,OperatingHours=r.OperatingHours,EnergyKwh=r.EnergyKwh,BatterySoc=r.BatterySoc,DepotCode=r.DepotCode,ServiceCentreCode=r.ServiceCentreCode,CustomerCode=r.CustomerCode,OwnershipTypeCode=r.OwnershipTypeCode,MaintenanceProgramId=r.MaintenanceProgramId,Remarks=r.Remarks,Status="Available",IsActive=true};
+    db.Vehicles.Add(v);Audit(db,"ENROLL","Vehicle",v.Id,v.RegistrationNumber,r.CreatedBy);await db.SaveChangesAsync();await EnsurePmObligationsAsync(db,v);return Results.Created($"/api/vehicles/{v.Id}",v);
+});
+
+app.MapPost("/api/pm/recalculate",async(AppDbContext db)=>{var vs=await db.Vehicles.Where(x=>x.IsActive).ToListAsync();foreach(var v in vs)await EnsurePmObligationsAsync(db,v);return Results.Ok(new{status="ok",vehicles=vs.Count});});
+app.MapGet("/api/pm/due-board",async(AppDbContext db)=>
+{
+    var obs=await db.PmObligations.Where(x=>x.Status!="Completed").OrderBy(x=>x.DueDate).ThenBy(x=>x.DueReading).ToListAsync();var vehicles=await db.Vehicles.AsNoTracking().ToDictionaryAsync(x=>x.Id);var plans=await db.MaintenancePlans.AsNoTracking().ToDictionaryAsync(x=>x.Id);var triggers=await db.MaintenancePlanTriggers.AsNoTracking().Where(x=>x.IsActive).ToListAsync();var result=new List<object>();
+    foreach(var o in obs){if(!vehicles.TryGetValue(o.VehicleId,out var v))continue;MaintenancePlan? p=null;if(o.MaintenancePlanId.HasValue)plans.TryGetValue(o.MaintenancePlanId.Value,out p);var ts=o.MaintenancePlanId.HasValue?triggers.Where(x=>x.MaintenancePlanId==o.MaintenancePlanId.Value).ToList():new List<MaintenancePlanTrigger>();var pieces=new List<string>();var duePieces=new List<string>();var remPieces=new List<string>();var overdue=false;var due=false;var soon=false;
+        foreach(var t in ts){switch(t.TriggerCode.ToUpperInvariant()){case "ODOMETER":if(o.DueReading.HasValue){var r=o.DueReading.Value-v.OdometerKm;pieces.Add("Odometer");duePieces.Add($"{o.DueReading:0} km");remPieces.Add($"{r:0} km");overdue|=r<0;due|=r==0;soon|=r>0&&r<=t.WarningValue;}break;case "OPERATING_HOURS":if(o.DueOperatingHours.HasValue){var r=o.DueOperatingHours.Value-v.OperatingHours;pieces.Add("Hours");duePieces.Add($"{o.DueOperatingHours:0} hr");remPieces.Add($"{r:0} hr");overdue|=r<0;due|=r==0;soon|=r>0&&r<=t.WarningValue;}break;case "KWH":if(o.DueEnergyKwh.HasValue){var r=o.DueEnergyKwh.Value-v.EnergyKwh;pieces.Add("kWh");duePieces.Add($"{o.DueEnergyKwh:0} kWh");remPieces.Add($"{r:0} kWh");overdue|=r<0;due|=r==0;soon|=r>0&&r<=t.WarningValue;}break;case "TIME":if(o.DueDate.HasValue){var r=(o.DueDate.Value.Date-DateTime.UtcNow.Date).Days;pieces.Add("Time");duePieces.Add(o.DueDate.Value.ToString("dd MMM yyyy"));remPieces.Add($"{r} days");overdue|=r<0;due|=r==0;soon|=r>0&&r<=t.WarningValue;}break;}}
+        var calc=overdue?"Overdue":due?"Due":soon?"Due Soon":"Upcoming";if(o.Status is "Planned" or "In Service")calc=o.Status;if(o.Status!=calc){o.Status=calc;}
+        result.Add(new{o.Id,o.VehicleId,vehicle=v.RegistrationNumber,model=v.Model,variant=v.Variant,imageUrl=v.ImageUrl,plan=p?.PlanCode??o.PlanCode,planName=p?.Name??o.PlanCode,trigger=pieces.Count>0?string.Join(" / ",pieces):o.TriggerType,current=$"{v.OdometerKm:0} km · {v.OperatingHours:0} hr · {v.EnergyKwh:0} kWh",due=string.Join(" · ",duePieces),remaining=string.Join(" · ",remPieces),status=calc});}
+    await db.SaveChangesAsync();return Results.Ok(result);
+});
+app.MapGet("/api/pm/history",async(AppDbContext db)=>
+{
+    var rows=await(from o in db.PmObligations.AsNoTracking() join v in db.Vehicles.AsNoTracking() on o.VehicleId equals v.Id where o.Status=="Completed" orderby o.CompletedAt descending select new{o.Id,vehicle=v.RegistrationNumber,v.Model,o.PlanCode,o.TriggerType,o.CompletedAt,o.DueDate,o.DueReading,o.DueOperatingHours,o.DueEnergyKwh}).ToListAsync();return Results.Ok(rows);
+});
+app.MapPost("/api/pm/obligations/{id:guid}/create-request",async(Guid id,AppDbContext db)=>
+{
+    var o=await db.PmObligations.FindAsync(id);if(o is null)return Results.NotFound();var v=await db.Vehicles.FindAsync(o.VehicleId);if(v is null)return Results.BadRequest();if(await db.MaintenanceRequests.AnyAsync(x=>x.SourceType=="PM"&&x.SourceReference==o.Id.ToString()&&x.Status!="Closed"))return Results.Conflict(new{message="A maintenance request already exists for this PM obligation."});
+    var mr=new MaintenanceRequest{RequestNumber=$"MR-{DateTime.UtcNow:yyyy}-{(await db.MaintenanceRequests.CountAsync()+1):D6}",VehicleId=v.Id,SourceType="PM",SourceReference=o.Id.ToString(),RequestType="Preventive Maintenance",Priority=o.Status=="Overdue"?"P2":"P3",Description=$"{o.PlanCode} preventive maintenance",Status="Open",RequestedBy="PM Engine",RequestedAt=DateTime.UtcNow};o.Status="Planned";db.MaintenanceRequests.Add(mr);Audit(db,"CREATE","MaintenanceRequest",mr.Id,$"{mr.RequestNumber} from {o.PlanCode}");await db.SaveChangesAsync();return Results.Ok(mr);
+});
+
+// Manual obligation generation remains for authorized exception use only.
 app.MapPost("/api/pm/obligations/generate", async (PmRequest r, AppDbContext db) =>
 {
-    var v = await db.Vehicles.FindAsync(r.VehicleId); if (v is null) return Results.BadRequest(new { message="Vehicle not found." });
-    var p = new PmObligation { VehicleId=v.Id, PlanCode=r.PlanCode, TriggerType=r.TriggerType, DueDate=r.DueDate, DueReading=r.DueReading };
-    if (r.TriggerType=="Odometer" && r.DueReading.HasValue) p.Status = r.DueReading.Value <= v.OdometerKm ? "Overdue" : (r.DueReading.Value-v.OdometerKm<=2000 ? "Due Soon":"Upcoming");
-    else if (r.DueDate.HasValue) p.Status = r.DueDate.Value.Date < DateTime.UtcNow.Date ? "Overdue" : ((r.DueDate.Value.Date-DateTime.UtcNow.Date).Days<=7 ? "Due Soon":"Upcoming");
-    db.PmObligations.Add(p); Audit(db,"GENERATE","PmObligation",p.Id,$"{v.RegistrationNumber} {p.PlanCode}");
-    await db.SaveChangesAsync(); return Results.Created($"/api/pm/obligations/{p.Id}", p);
+    var v=await db.Vehicles.FindAsync(r.VehicleId);if(v is null)return Results.BadRequest(new{message="Vehicle not found."});
+    var p=new PmObligation{VehicleId=v.Id,PlanCode=r.PlanCode,TriggerType=r.TriggerType,DueDate=r.DueDate,DueReading=r.DueReading,Status="Upcoming"};db.PmObligations.Add(p);Audit(db,"GENERATE","PmObligation",p.Id,$"{v.RegistrationNumber} {p.PlanCode}");await db.SaveChangesAsync();return Results.Created($"/api/pm/obligations/{p.Id}",p);
 });
-
 
 app.MapGet("/api/appointments", async (AppDbContext db) =>
 {
@@ -330,11 +525,20 @@ app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbCo
     if(a.Status=="In Progress")return Results.Conflict(new{message="Appointment already started."});
     if(a.Status=="Cancelled"||a.Status=="No-show"||a.Status=="Completed")return Results.Conflict(new{message=$"Cannot start a {a.Status} appointment."});
 
-    var e=new ServiceEvent{VehicleId=v.Id,EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}",
+    var e=new ServiceEvent{VehicleId=v.Id,PmObligationId=a.PmObligationId,EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}",
         EventType=a.AppointmentType,Priority=a.Priority,Status="In Progress"};
     var jc=new JobCard{ServiceEventId=e.Id,JobCardNumber=$"JC-{DateTime.UtcNow:yyyy}-{(await db.JobCards.CountAsync()+1):D6}",
         Status="Open",Bay=a.Bay,TechnicianId=a.TechnicianId,Technician=a.Technician,StartedAt=DateTime.UtcNow};
     a.Status="In Progress"; v.Status="Under Maintenance"; db.ServiceEvents.Add(e); db.JobCards.Add(jc);
+    if(a.PmObligationId.HasValue)
+    {
+        var po=await db.PmObligations.FindAsync(a.PmObligationId.Value);
+        if(po?.MaintenancePlanId is Guid planId)
+        {
+            var mapped=await(from m in db.MaintenancePlanTasks where m.MaintenancePlanId==planId join sm in db.ServiceTaskMasters on m.ServiceTaskMasterId equals sm.Id orderby m.Sequence select new{m,sm}).ToListAsync();
+            var seq=0;foreach(var x in mapped){seq++;db.WorkItems.Add(new WorkItem{JobCardId=jc.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-{seq:D2}",WorkType="PM",Description=x.sm.Name,Status="Not Started",Priority=a.Priority,EstimatedHours=x.sm.StandardHours,StandardRepairHours=x.sm.StandardHours,RequiresQc=x.sm.RequiresQc,RequiresHvAuthorization=x.sm.RequiresHvAuthorization,UpdatedAt=DateTime.UtcNow});}
+        }
+    }
     db.VehicleAvailabilityLedger.Add(new VehicleAvailabilityLedger{VehicleId=v.Id,State="Under Maintenance",StartAt=DateTime.UtcNow,
         ReasonCode=a.AppointmentType,SourceType="ServiceEvent",SourceServiceEventId=e.Id});
     if(a.PmObligationId.HasValue){var p=await db.PmObligations.FindAsync(a.PmObligationId.Value);if(p!=null)p.Status="In Service";}
@@ -654,7 +858,13 @@ app.MapPost("/api/service-events/{id:guid}/release", async (Guid id, ReleaseRequ
     var openLedger=await db.VehicleAvailabilityLedger.Where(x=>x.VehicleId==v.Id && x.EndAt==null).OrderByDescending(x=>x.StartAt).FirstOrDefaultAsync();
     if(openLedger!=null) openLedger.EndAt=DateTime.UtcNow;
     db.VehicleAvailabilityLedger.Add(new VehicleAvailabilityLedger { VehicleId=v.Id, State="Available", StartAt=DateTime.UtcNow, ReasonCode="Released", SourceType="ServiceEvent", SourceServiceEventId=e.Id });
-    db.VehicleReleases.Add(rel); Audit(db,"RELEASE","Vehicle",v.Id,e.EventNumber,r.ReleasedBy); await db.SaveChangesAsync(); return Results.Ok(rel);
+    db.VehicleReleases.Add(rel); Audit(db,"RELEASE","Vehicle",v.Id,e.EventNumber,r.ReleasedBy);
+    if(e.PmObligationId.HasValue)
+    {
+        var po=await db.PmObligations.FindAsync(e.PmObligationId.Value);
+        if(po is not null){po.Status="Completed";po.CompletedAt=DateTime.UtcNow;await db.SaveChangesAsync();await GenerateNextPmObligationAsync(db,po,v);}
+    }
+    await db.SaveChangesAsync(); return Results.Ok(rel);
 });
 
 app.MapGet("/api/audit", async (AppDbContext db) => Results.Ok(await db.AuditEvents.AsNoTracking().OrderByDescending(x=>x.OccurredAt).Take(250).ToListAsync()));
@@ -959,6 +1169,7 @@ app.MapFallback(async context =>
 app.Run();
 
 record PmRequest(Guid VehicleId, string PlanCode, string TriggerType, DateTime? DueDate, decimal? DueReading);
+record VehicleEnrollmentRequest(string Vin,string RegistrationNumber,Guid ModelMasterId,Guid? VariantMasterId,string ImageUrl,string MotorNumber,DateTime? PurchaseDate,decimal? PurchaseCost,string InvoiceNumber,string DealerName,DateTime? CommissioningDate,DateTime? RegistrationDate,DateTime? RegistrationExpiry,string InsuranceNumber,DateTime? InsuranceStartDate,DateTime? InsuranceExpiryDate,DateTime? WarrantyStartDate,DateTime? WarrantyExpiryDate,DateTime? BatteryWarrantyStartDate,DateTime? BatteryWarrantyExpiryDate,decimal OdometerKm,decimal OperatingHours,decimal EnergyKwh,decimal? BatterySoc,string DepotCode,string ServiceCentreCode,string CustomerCode,string OwnershipTypeCode,Guid? MaintenanceProgramId,string Remarks,string CreatedBy);
 record AppointmentRequest(Guid VehicleId, Guid? PmObligationId, string SourceType, string SourceReference, DateTime StartAt, string ServiceCentre, string Bay,
     Guid? TechnicianId, string AppointmentType, string Priority, string Reason, decimal PlannedHours, string CreatedBy);
 record WorkItemRequest(string WorkType, string Description, decimal? StandardRepairHours, bool RequiresQc, bool RequiresHvAuthorization);

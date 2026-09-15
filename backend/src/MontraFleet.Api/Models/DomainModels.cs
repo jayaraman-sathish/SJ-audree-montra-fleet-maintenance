@@ -7,22 +7,54 @@ public class Vehicle
     public string RegistrationNumber { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
     public string Variant { get; set; } = string.Empty;
+    public string VehicleTypeCode { get; set; } = string.Empty;
+    public string ManufacturerCode { get; set; } = string.Empty;
+    public Guid? ModelMasterId { get; set; }
+    public Guid? VariantMasterId { get; set; }
+    public string ImageUrl { get; set; } = string.Empty;
+    public string MotorNumber { get; set; } = string.Empty;
+    public DateTime? PurchaseDate { get; set; }
+    public decimal? PurchaseCost { get; set; }
+    public string InvoiceNumber { get; set; } = string.Empty;
+    public string DealerName { get; set; } = string.Empty;
+    public DateTime? CommissioningDate { get; set; }
+    public DateTime? RegistrationDate { get; set; }
+    public DateTime? RegistrationExpiry { get; set; }
+    public string InsuranceNumber { get; set; } = string.Empty;
+    public DateTime? InsuranceStartDate { get; set; }
+    public DateTime? InsuranceExpiryDate { get; set; }
+    public DateTime? WarrantyStartDate { get; set; }
+    public DateTime? WarrantyExpiryDate { get; set; }
+    public DateTime? BatteryWarrantyStartDate { get; set; }
+    public DateTime? BatteryWarrantyExpiryDate { get; set; }
+    public string DepotCode { get; set; } = string.Empty;
+    public string ServiceCentreCode { get; set; } = string.Empty;
+    public string CustomerCode { get; set; } = string.Empty;
+    public string OwnershipTypeCode { get; set; } = string.Empty;
+    public Guid? MaintenanceProgramId { get; set; }
+    public string Remarks { get; set; } = string.Empty;
     public string Status { get; set; } = "Available";
     public decimal OdometerKm { get; set; }
     public decimal OperatingHours { get; set; }
+    public decimal EnergyKwh { get; set; }
     public decimal? BatterySoc { get; set; }
+    public bool IsActive { get; set; } = true;
 }
 
 public class PmObligation
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid VehicleId { get; set; }
+    public Guid? MaintenancePlanId { get; set; }
     public string PlanCode { get; set; } = string.Empty;
     public string TriggerType { get; set; } = string.Empty;
     public DateTime? DueDate { get; set; }
     public decimal? DueReading { get; set; }
+    public decimal? DueOperatingHours { get; set; }
+    public decimal? DueEnergyKwh { get; set; }
     public string Status { get; set; } = "Upcoming";
     public DateTime? GeneratedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? CompletedAt { get; set; }
     public Guid? SupersededById { get; set; }
 }
 
@@ -76,6 +108,7 @@ public class ServiceEvent
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid VehicleId { get; set; }
     public Guid? BreakdownId { get; set; }
+    public Guid? PmObligationId { get; set; }
     public string EventNumber { get; set; } = string.Empty;
     public string EventType { get; set; } = string.Empty;
     public string Priority { get; set; } = "P3";
@@ -381,6 +414,90 @@ public class Campaign { public Guid Id { get; set; } = Guid.NewGuid(); public st
 public class VehicleCampaign { public Guid Id { get; set; } = Guid.NewGuid(); public Guid CampaignId { get; set; } public Guid VehicleId { get; set; } public string Status { get; set; } = "Open"; public Guid? ServiceEventId { get; set; } public DateTime? CompletedAt { get; set; } }
 public class VehicleDocument { public Guid Id { get; set; } = Guid.NewGuid(); public Guid VehicleId { get; set; } public string DocumentType { get; set; } = string.Empty; public string FileName { get; set; } = string.Empty; public string StorageReference { get; set; } = string.Empty; public string UploadedBy { get; set; } = string.Empty; public DateTime UploadedAt { get; set; } = DateTime.UtcNow; public string Status { get; set; } = "Active"; }
 public class IntegrationOutbox { public Guid Id { get; set; } = Guid.NewGuid(); public string IntegrationName { get; set; } = string.Empty; public string MessageType { get; set; } = string.Empty; public string EntityType { get; set; } = string.Empty; public Guid? EntityId { get; set; } public string PayloadJson { get; set; } = "{}"; public string Status { get; set; } = "Pending"; public int AttemptCount { get; set; } public DateTime CreatedAt { get; set; } = DateTime.UtcNow; public DateTime? ProcessedAt { get; set; } }
+
+
+public class MasterOption
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Category { get; set; } = string.Empty;
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public int SortOrder { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class VehicleModelMaster
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string ModelCode { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string ManufacturerCode { get; set; } = string.Empty;
+    public string VehicleTypeCode { get; set; } = string.Empty;
+    public string PowertrainCode { get; set; } = string.Empty;
+    public string ImageUrl { get; set; } = string.Empty;
+    public decimal? GvwKg { get; set; }
+    public decimal? BatteryCapacityKwh { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class VehicleVariantMaster
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid VehicleModelMasterId { get; set; }
+    public string VariantCode { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string ImageUrl { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
+public class MaintenanceProgram
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string ProgramCode { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public Guid? VehicleModelMasterId { get; set; }
+    public Guid? VehicleVariantMasterId { get; set; }
+    public DateTime EffectiveFrom { get; set; } = DateTime.UtcNow;
+    public DateTime? EffectiveTo { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class MaintenancePlan
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid MaintenanceProgramId { get; set; }
+    public string PlanCode { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string RecurrenceBasis { get; set; } = "Completion";
+    public int Sequence { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class MaintenancePlanTrigger
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid MaintenancePlanId { get; set; }
+    public string TriggerCode { get; set; } = "ODOMETER";
+    public decimal IntervalValue { get; set; }
+    public decimal? InitialDueValue { get; set; }
+    public string UnitCode { get; set; } = string.Empty;
+    public decimal WarningValue { get; set; }
+    public decimal ToleranceValue { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class MaintenancePlanTask
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid MaintenancePlanId { get; set; }
+    public Guid ServiceTaskMasterId { get; set; }
+    public int Sequence { get; set; }
+    public bool IsMandatory { get; set; } = true;
+}
 
 
 public class MaintenanceRequest
