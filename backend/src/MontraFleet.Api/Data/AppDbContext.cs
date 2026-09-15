@@ -13,6 +13,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<CustomerMaster> CustomerMasters => Set<CustomerMaster>();
     public DbSet<DepotMaster> DepotMasters => Set<DepotMaster>();
     public DbSet<ServiceCentreMaster> ServiceCentreMasters => Set<ServiceCentreMaster>();
+    public DbSet<ServiceCentreModelSupport> ServiceCentreModelSupports => Set<ServiceCentreModelSupport>();
     public DbSet<MaintenanceProgram> MaintenancePrograms => Set<MaintenanceProgram>();
     public DbSet<MaintenancePlan> MaintenancePlans => Set<MaintenancePlan>();
     public DbSet<MaintenancePlanTrigger> MaintenancePlanTriggers => Set<MaintenancePlanTrigger>();
@@ -63,6 +64,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         m.Entity<CustomerMaster>().HasIndex(x => x.CustomerCode).IsUnique();
         m.Entity<DepotMaster>().HasIndex(x => x.DepotCode).IsUnique();
         m.Entity<ServiceCentreMaster>().HasIndex(x => x.CentreCode).IsUnique();
+        m.Entity<ServiceCentreModelSupport>().HasIndex(x => new { x.ServiceCentreMasterId, x.VehicleModelMasterId }).IsUnique();
         m.Entity<VehicleVariantMaster>().Property(x => x.GvwKg).HasPrecision(18, 2);
         m.Entity<VehicleVariantMaster>().Property(x => x.PayloadKg).HasPrecision(18, 2);
         m.Entity<VehicleVariantMaster>().Property(x => x.BatteryCapacityKwh).HasPrecision(18, 2);
