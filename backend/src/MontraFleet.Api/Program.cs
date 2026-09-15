@@ -209,42 +209,6 @@ using (var scope = app.Services.CreateScope())
 
 
 
-    await db.Database.ExecuteSqlRawAsync("""
-        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "GvwKg" numeric(18,2) NULL;
-        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "PayloadKg" numeric(18,2) NULL;
-        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "BatteryCapacityKwh" numeric(18,2) NULL;
-        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "MotorPowerKw" numeric(18,2) NULL;
-        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "WheelbaseMm" numeric(18,2) NULL;
-        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "Configuration" text NOT NULL DEFAULT '';
-        ALTER TABLE "VehicleVariantMasters" ADD COLUMN IF NOT EXISTS "EffectiveFrom" timestamptz NULL;
-
-        CREATE TABLE IF NOT EXISTS "CustomerMasters" (
-          "Id" uuid PRIMARY KEY, "CustomerCode" text NOT NULL, "Name" text NOT NULL DEFAULT '',
-          "AddressLine1" text NOT NULL DEFAULT '', "AddressLine2" text NOT NULL DEFAULT '',
-          "City" text NOT NULL DEFAULT '', "State" text NOT NULL DEFAULT '', "PostalCode" text NOT NULL DEFAULT '',
-          "Country" text NOT NULL DEFAULT 'India', "Gstin" text NOT NULL DEFAULT '',
-          "ContactPerson" text NOT NULL DEFAULT '', "Mobile" text NOT NULL DEFAULT '', "Email" text NOT NULL DEFAULT '',
-          "IsActive" boolean NOT NULL DEFAULT true);
-        CREATE UNIQUE INDEX IF NOT EXISTS "IX_CustomerMasters_CustomerCode" ON "CustomerMasters" ("CustomerCode");
-
-        CREATE TABLE IF NOT EXISTS "DepotMasters" (
-          "Id" uuid PRIMARY KEY, "DepotCode" text NOT NULL, "Name" text NOT NULL DEFAULT '',
-          "CustomerMasterId" uuid NULL, "AddressLine1" text NOT NULL DEFAULT '', "City" text NOT NULL DEFAULT '',
-          "State" text NOT NULL DEFAULT '', "PostalCode" text NOT NULL DEFAULT '',
-          "ContactPerson" text NOT NULL DEFAULT '', "Mobile" text NOT NULL DEFAULT '', "IsActive" boolean NOT NULL DEFAULT true);
-        CREATE UNIQUE INDEX IF NOT EXISTS "IX_DepotMasters_DepotCode" ON "DepotMasters" ("DepotCode");
-
-        CREATE TABLE IF NOT EXISTS "ServiceCentreMasters" (
-          "Id" uuid PRIMARY KEY, "CentreCode" text NOT NULL, "Name" text NOT NULL DEFAULT '',
-          "CentreType" text NOT NULL DEFAULT 'Company', "AddressLine1" text NOT NULL DEFAULT '',
-          "City" text NOT NULL DEFAULT '', "State" text NOT NULL DEFAULT '', "PostalCode" text NOT NULL DEFAULT '',
-          "ContactPerson" text NOT NULL DEFAULT '', "Mobile" text NOT NULL DEFAULT '', "WorkingHours" text NOT NULL DEFAULT '',
-          "BayCount" integer NOT NULL DEFAULT 0, "IsActive" boolean NOT NULL DEFAULT true);
-        CREATE UNIQUE INDEX IF NOT EXISTS "IX_ServiceCentreMasters_CentreCode" ON "ServiceCentreMasters" ("CentreCode");
-    """);
-
-
-
     if (!await db.InventoryLocations.AnyAsync())
     {
         db.InventoryLocations.Add(new InventoryLocation { LocationCode="MAIN-STORE", Name="Main Parts Store", ServiceCentre="Chennai Service Centre", Bin="GENERAL" });
@@ -294,11 +258,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.6.2" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.6" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.6.2" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.6" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -306,7 +270,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.6.2" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.6" });
 });
 
 static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
@@ -427,62 +391,6 @@ app.MapPost("/api/pm/vehicle-variants", async (VehicleVariantMaster r,AppDbConte
     r.Id=Guid.NewGuid();r.VariantCode=r.VariantCode.Trim().ToUpperInvariant();if(!await db.VehicleModelMasters.AnyAsync(x=>x.Id==r.VehicleModelMasterId))return Results.BadRequest(new{message="Vehicle model not found."});
     if(await db.VehicleVariantMasters.AnyAsync(x=>x.VehicleModelMasterId==r.VehicleModelMasterId&&x.VariantCode==r.VariantCode))return Results.Conflict(new{message="Variant code already exists for the model."});
     db.VehicleVariantMasters.Add(r);await db.SaveChangesAsync();return Results.Ok(r);
-});
-
-app.MapPut("/api/pm/vehicle-variants/{id:guid}", async (Guid id,VehicleVariantMaster r,AppDbContext db)=>
-{
-    var x=await db.VehicleVariantMasters.FindAsync(id);if(x is null)return Results.NotFound();
-    if(x.VehicleModelMasterId!=r.VehicleModelMasterId && !await db.VehicleModelMasters.AnyAsync(m=>m.Id==r.VehicleModelMasterId))return Results.BadRequest(new{message="Vehicle model not found."});
-    x.VehicleModelMasterId=r.VehicleModelMasterId;x.Name=r.Name;x.ImageUrl=r.ImageUrl;x.GvwKg=r.GvwKg;x.PayloadKg=r.PayloadKg;
-    x.BatteryCapacityKwh=r.BatteryCapacityKwh;x.MotorPowerKw=r.MotorPowerKw;x.WheelbaseMm=r.WheelbaseMm;x.Configuration=r.Configuration;
-    x.EffectiveFrom=r.EffectiveFrom;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
-});
-
-
-app.MapGet("/api/pm/customers", async (AppDbContext db) => Results.Ok(await db.CustomerMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
-app.MapPost("/api/pm/customers", async (CustomerMaster r,AppDbContext db)=>
-{
-    r.Id=Guid.NewGuid();r.CustomerCode=r.CustomerCode.Trim().ToUpperInvariant();
-    if(string.IsNullOrWhiteSpace(r.CustomerCode)||string.IsNullOrWhiteSpace(r.Name))return Results.BadRequest(new{message="Customer code and name are required."});
-    if(await db.CustomerMasters.AnyAsync(x=>x.CustomerCode==r.CustomerCode))return Results.Conflict(new{message="Customer code already exists."});
-    db.CustomerMasters.Add(r);Audit(db,"CREATE","CustomerMaster",r.Id,r.CustomerCode);await db.SaveChangesAsync();return Results.Ok(r);
-});
-app.MapPut("/api/pm/customers/{id:guid}", async (Guid id,CustomerMaster r,AppDbContext db)=>
-{
-    var x=await db.CustomerMasters.FindAsync(id);if(x is null)return Results.NotFound();
-    x.Name=r.Name;x.AddressLine1=r.AddressLine1;x.AddressLine2=r.AddressLine2;x.City=r.City;x.State=r.State;x.PostalCode=r.PostalCode;x.Country=r.Country;
-    x.Gstin=r.Gstin;x.ContactPerson=r.ContactPerson;x.Mobile=r.Mobile;x.Email=r.Email;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
-});
-
-app.MapGet("/api/pm/depots", async (AppDbContext db) => Results.Ok(await db.DepotMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
-app.MapPost("/api/pm/depots", async (DepotMaster r,AppDbContext db)=>
-{
-    r.Id=Guid.NewGuid();r.DepotCode=r.DepotCode.Trim().ToUpperInvariant();
-    if(string.IsNullOrWhiteSpace(r.DepotCode)||string.IsNullOrWhiteSpace(r.Name))return Results.BadRequest(new{message="Depot code and name are required."});
-    if(r.CustomerMasterId.HasValue&&!await db.CustomerMasters.AnyAsync(x=>x.Id==r.CustomerMasterId))return Results.BadRequest(new{message="Customer not found."});
-    if(await db.DepotMasters.AnyAsync(x=>x.DepotCode==r.DepotCode))return Results.Conflict(new{message="Depot code already exists."});
-    db.DepotMasters.Add(r);await db.SaveChangesAsync();return Results.Ok(r);
-});
-app.MapPut("/api/pm/depots/{id:guid}", async (Guid id,DepotMaster r,AppDbContext db)=>
-{
-    var x=await db.DepotMasters.FindAsync(id);if(x is null)return Results.NotFound();
-    x.Name=r.Name;x.CustomerMasterId=r.CustomerMasterId;x.AddressLine1=r.AddressLine1;x.City=r.City;x.State=r.State;x.PostalCode=r.PostalCode;
-    x.ContactPerson=r.ContactPerson;x.Mobile=r.Mobile;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
-});
-
-app.MapGet("/api/pm/service-centres", async (AppDbContext db) => Results.Ok(await db.ServiceCentreMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
-app.MapPost("/api/pm/service-centres", async (ServiceCentreMaster r,AppDbContext db)=>
-{
-    r.Id=Guid.NewGuid();r.CentreCode=r.CentreCode.Trim().ToUpperInvariant();
-    if(string.IsNullOrWhiteSpace(r.CentreCode)||string.IsNullOrWhiteSpace(r.Name))return Results.BadRequest(new{message="Service centre code and name are required."});
-    if(await db.ServiceCentreMasters.AnyAsync(x=>x.CentreCode==r.CentreCode))return Results.Conflict(new{message="Service centre code already exists."});
-    db.ServiceCentreMasters.Add(r);await db.SaveChangesAsync();return Results.Ok(r);
-});
-app.MapPut("/api/pm/service-centres/{id:guid}", async (Guid id,ServiceCentreMaster r,AppDbContext db)=>
-{
-    var x=await db.ServiceCentreMasters.FindAsync(id);if(x is null)return Results.NotFound();
-    x.Name=r.Name;x.CentreType=r.CentreType;x.AddressLine1=r.AddressLine1;x.City=r.City;x.State=r.State;x.PostalCode=r.PostalCode;
-    x.ContactPerson=r.ContactPerson;x.Mobile=r.Mobile;x.WorkingHours=r.WorkingHours;x.BayCount=r.BayCount;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
 });
 
 app.MapGet("/api/pm/programs", async (AppDbContext db) => Results.Ok(await db.MaintenancePrograms.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
