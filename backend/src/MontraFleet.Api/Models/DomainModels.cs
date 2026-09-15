@@ -449,63 +449,6 @@ public class VehicleVariantMaster
     public string VariantCode { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string ImageUrl { get; set; } = string.Empty;
-    public decimal? GvwKg { get; set; }
-    public decimal? PayloadKg { get; set; }
-    public decimal? BatteryCapacityKwh { get; set; }
-    public decimal? MotorPowerKw { get; set; }
-    public decimal? WheelbaseMm { get; set; }
-    public string Configuration { get; set; } = string.Empty;
-    public DateTime? EffectiveFrom { get; set; }
-    public bool IsActive { get; set; } = true;
-}
-
-public class CustomerMaster
-{
-    public Guid Id { get; set; } = Guid.NewGuid();
-    public string CustomerCode { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-    public string AddressLine1 { get; set; } = string.Empty;
-    public string AddressLine2 { get; set; } = string.Empty;
-    public string City { get; set; } = string.Empty;
-    public string State { get; set; } = string.Empty;
-    public string PostalCode { get; set; } = string.Empty;
-    public string Country { get; set; } = "India";
-    public string Gstin { get; set; } = string.Empty;
-    public string ContactPerson { get; set; } = string.Empty;
-    public string Mobile { get; set; } = string.Empty;
-    public string Email { get; set; } = string.Empty;
-    public bool IsActive { get; set; } = true;
-}
-
-public class DepotMaster
-{
-    public Guid Id { get; set; } = Guid.NewGuid();
-    public string DepotCode { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-    public Guid? CustomerMasterId { get; set; }
-    public string AddressLine1 { get; set; } = string.Empty;
-    public string City { get; set; } = string.Empty;
-    public string State { get; set; } = string.Empty;
-    public string PostalCode { get; set; } = string.Empty;
-    public string ContactPerson { get; set; } = string.Empty;
-    public string Mobile { get; set; } = string.Empty;
-    public bool IsActive { get; set; } = true;
-}
-
-public class ServiceCentreMaster
-{
-    public Guid Id { get; set; } = Guid.NewGuid();
-    public string CentreCode { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-    public string CentreType { get; set; } = "Company";
-    public string AddressLine1 { get; set; } = string.Empty;
-    public string City { get; set; } = string.Empty;
-    public string State { get; set; } = string.Empty;
-    public string PostalCode { get; set; } = string.Empty;
-    public string ContactPerson { get; set; } = string.Empty;
-    public string Mobile { get; set; } = string.Empty;
-    public string WorkingHours { get; set; } = string.Empty;
-    public int BayCount { get; set; }
     public bool IsActive { get; set; } = true;
 }
 

@@ -9,9 +9,6 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MasterOption> MasterOptions => Set<MasterOption>();
     public DbSet<VehicleModelMaster> VehicleModelMasters => Set<VehicleModelMaster>();
     public DbSet<VehicleVariantMaster> VehicleVariantMasters => Set<VehicleVariantMaster>();
-    public DbSet<CustomerMaster> CustomerMasters => Set<CustomerMaster>();
-    public DbSet<DepotMaster> DepotMasters => Set<DepotMaster>();
-    public DbSet<ServiceCentreMaster> ServiceCentreMasters => Set<ServiceCentreMaster>();
     public DbSet<MaintenanceProgram> MaintenancePrograms => Set<MaintenanceProgram>();
     public DbSet<MaintenancePlan> MaintenancePlans => Set<MaintenancePlan>();
     public DbSet<MaintenancePlanTrigger> MaintenancePlanTriggers => Set<MaintenancePlanTrigger>();
@@ -58,14 +55,6 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         m.Entity<MasterOption>().HasIndex(x => new { x.Category, x.Code }).IsUnique();
         m.Entity<VehicleModelMaster>().HasIndex(x => x.ModelCode).IsUnique();
         m.Entity<VehicleVariantMaster>().HasIndex(x => new { x.VehicleModelMasterId, x.VariantCode }).IsUnique();
-        m.Entity<CustomerMaster>().HasIndex(x => x.CustomerCode).IsUnique();
-        m.Entity<DepotMaster>().HasIndex(x => x.DepotCode).IsUnique();
-        m.Entity<ServiceCentreMaster>().HasIndex(x => x.CentreCode).IsUnique();
-        m.Entity<VehicleVariantMaster>().Property(x => x.GvwKg).HasPrecision(18, 2);
-        m.Entity<VehicleVariantMaster>().Property(x => x.PayloadKg).HasPrecision(18, 2);
-        m.Entity<VehicleVariantMaster>().Property(x => x.BatteryCapacityKwh).HasPrecision(18, 2);
-        m.Entity<VehicleVariantMaster>().Property(x => x.MotorPowerKw).HasPrecision(18, 2);
-        m.Entity<VehicleVariantMaster>().Property(x => x.WheelbaseMm).HasPrecision(18, 2);
         m.Entity<MaintenanceProgram>().HasIndex(x => x.ProgramCode).IsUnique();
         m.Entity<MaintenancePlan>().HasIndex(x => new { x.MaintenanceProgramId, x.PlanCode }).IsUnique();
         m.Entity<MaintenancePlanTrigger>().HasIndex(x => new { x.MaintenancePlanId, x.TriggerCode }).IsUnique();
