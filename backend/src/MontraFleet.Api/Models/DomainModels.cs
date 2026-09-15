@@ -548,6 +548,110 @@ public class ServiceCentreUpsertRequest
     public List<Guid> SupportedModelIds { get; set; } = new();
 }
 
+
+public class WorkTemplate
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string TemplateCode { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Category { get; set; } = "Inspection";
+    public string Description { get; set; } = string.Empty;
+    public int Version { get; set; } = 1;
+    public decimal StandardHours { get; set; }
+    public string RequiredSkillCode { get; set; } = string.Empty;
+    public bool RequiresHvAuthorization { get; set; }
+    public bool RequiresQc { get; set; } = true;
+    public bool IsActive { get; set; } = true;
+}
+
+public class WorkTemplateField
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid WorkTemplateId { get; set; }
+    public string SectionName { get; set; } = "General";
+    public int Sequence { get; set; }
+    public string FieldCode { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string FieldType { get; set; } = "Text";
+    public string UnitCode { get; set; } = string.Empty;
+    public bool IsMandatory { get; set; } = true;
+    public decimal? MinValue { get; set; }
+    public decimal? MaxValue { get; set; }
+    public string Options { get; set; } = string.Empty;
+    public string FailureAction { get; set; } = "None";
+}
+
+public class MaintenancePlanTemplate
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid MaintenancePlanId { get; set; }
+    public Guid WorkTemplateId { get; set; }
+    public int Sequence { get; set; }
+    public bool IsMandatory { get; set; } = true;
+}
+
+public class WorkTemplateInstance
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid JobCardId { get; set; }
+    public Guid WorkItemId { get; set; }
+    public Guid WorkTemplateId { get; set; }
+    public string TemplateCode { get; set; } = string.Empty;
+    public string TemplateName { get; set; } = string.Empty;
+    public int TemplateVersion { get; set; }
+    public string Status { get; set; } = "Not Started";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? CompletedAt { get; set; }
+}
+
+public class WorkTemplateFieldInstance
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid WorkTemplateInstanceId { get; set; }
+    public Guid? SourceTemplateFieldId { get; set; }
+    public string SectionName { get; set; } = "General";
+    public int Sequence { get; set; }
+    public string FieldCode { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string FieldType { get; set; } = "Text";
+    public string UnitCode { get; set; } = string.Empty;
+    public bool IsMandatory { get; set; } = true;
+    public decimal? MinValue { get; set; }
+    public decimal? MaxValue { get; set; }
+    public string Options { get; set; } = string.Empty;
+    public string FailureAction { get; set; } = "None";
+    public string Value { get; set; } = string.Empty;
+    public string Result { get; set; } = "Pending";
+    public string Remarks { get; set; } = string.Empty;
+    public string EvidenceReference { get; set; } = string.Empty;
+    public DateTime? ExecutedAt { get; set; }
+    public string ExecutedBy { get; set; } = string.Empty;
+}
+
+public class WorkTemplateFieldInput
+{
+    public string SectionName { get; set; } = "General";
+    public int Sequence { get; set; }
+    public string FieldCode { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string FieldType { get; set; } = "Text";
+    public string UnitCode { get; set; } = string.Empty;
+    public bool IsMandatory { get; set; } = true;
+    public decimal? MinValue { get; set; }
+    public decimal? MaxValue { get; set; }
+    public string Options { get; set; } = string.Empty;
+    public string FailureAction { get; set; } = "None";
+}
+
+public class WorkTemplateFieldResultRequest
+{
+    public string Value { get; set; } = string.Empty;
+    public string Result { get; set; } = "Pass";
+    public string Remarks { get; set; } = string.Empty;
+    public string EvidenceReference { get; set; } = string.Empty;
+    public string ExecutedBy { get; set; } = "Technician";
+}
+
 public class MaintenanceProgram
 {
     public Guid Id { get; set; } = Guid.NewGuid();

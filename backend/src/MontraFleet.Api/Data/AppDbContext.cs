@@ -14,6 +14,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<DepotMaster> DepotMasters => Set<DepotMaster>();
     public DbSet<ServiceCentreMaster> ServiceCentreMasters => Set<ServiceCentreMaster>();
     public DbSet<ServiceCentreModelSupport> ServiceCentreModelSupports => Set<ServiceCentreModelSupport>();
+    public DbSet<WorkTemplate> WorkTemplates => Set<WorkTemplate>();
+    public DbSet<WorkTemplateField> WorkTemplateFields => Set<WorkTemplateField>();
+    public DbSet<MaintenancePlanTemplate> MaintenancePlanTemplates => Set<MaintenancePlanTemplate>();
+    public DbSet<WorkTemplateInstance> WorkTemplateInstances => Set<WorkTemplateInstance>();
+    public DbSet<WorkTemplateFieldInstance> WorkTemplateFieldInstances => Set<WorkTemplateFieldInstance>();
     public DbSet<MaintenanceProgram> MaintenancePrograms => Set<MaintenanceProgram>();
     public DbSet<MaintenancePlan> MaintenancePlans => Set<MaintenancePlan>();
     public DbSet<MaintenancePlanTrigger> MaintenancePlanTriggers => Set<MaintenancePlanTrigger>();
@@ -65,6 +70,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         m.Entity<DepotMaster>().HasIndex(x => x.DepotCode).IsUnique();
         m.Entity<ServiceCentreMaster>().HasIndex(x => x.CentreCode).IsUnique();
         m.Entity<ServiceCentreModelSupport>().HasIndex(x => new { x.ServiceCentreMasterId, x.VehicleModelMasterId }).IsUnique();
+        m.Entity<WorkTemplate>().HasIndex(x => x.TemplateCode).IsUnique();
+        m.Entity<WorkTemplateField>().HasIndex(x => new { x.WorkTemplateId, x.FieldCode }).IsUnique();
+        m.Entity<MaintenancePlanTemplate>().HasIndex(x => new { x.MaintenancePlanId, x.WorkTemplateId }).IsUnique();
+        m.Entity<WorkTemplateInstance>().HasIndex(x => x.WorkItemId).IsUnique();
+        m.Entity<WorkTemplate>().Property(x => x.StandardHours).HasPrecision(18, 2);
+        m.Entity<WorkTemplateField>().Property(x => x.MinValue).HasPrecision(18, 4);
+        m.Entity<WorkTemplateField>().Property(x => x.MaxValue).HasPrecision(18, 4);
+        m.Entity<WorkTemplateFieldInstance>().Property(x => x.MinValue).HasPrecision(18, 4);
+        m.Entity<WorkTemplateFieldInstance>().Property(x => x.MaxValue).HasPrecision(18, 4);
         m.Entity<VehicleVariantMaster>().Property(x => x.GvwKg).HasPrecision(18, 2);
         m.Entity<VehicleVariantMaster>().Property(x => x.PayloadKg).HasPrecision(18, 2);
         m.Entity<VehicleVariantMaster>().Property(x => x.BatteryCapacityKwh).HasPrecision(18, 2);

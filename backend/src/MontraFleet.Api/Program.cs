@@ -256,6 +256,47 @@ using (var scope = app.Services.CreateScope())
           "VehicleModelMasterId" uuid NOT NULL);
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_ServiceCentreModelSupports_Centre_Model"
           ON "ServiceCentreModelSupports" ("ServiceCentreMasterId","VehicleModelMasterId");
+
+        CREATE TABLE IF NOT EXISTS "WorkTemplates" (
+          "Id" uuid PRIMARY KEY, "TemplateCode" text NOT NULL, "Name" text NOT NULL DEFAULT '',
+          "Category" text NOT NULL DEFAULT 'Inspection', "Description" text NOT NULL DEFAULT '',
+          "Version" integer NOT NULL DEFAULT 1, "StandardHours" numeric(18,2) NOT NULL DEFAULT 0,
+          "RequiredSkillCode" text NOT NULL DEFAULT '', "RequiresHvAuthorization" boolean NOT NULL DEFAULT false,
+          "RequiresQc" boolean NOT NULL DEFAULT true, "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_WorkTemplates_TemplateCode" ON "WorkTemplates" ("TemplateCode");
+
+        CREATE TABLE IF NOT EXISTS "WorkTemplateFields" (
+          "Id" uuid PRIMARY KEY, "WorkTemplateId" uuid NOT NULL, "SectionName" text NOT NULL DEFAULT 'General',
+          "Sequence" integer NOT NULL DEFAULT 0, "FieldCode" text NOT NULL, "Label" text NOT NULL DEFAULT '',
+          "FieldType" text NOT NULL DEFAULT 'Text', "UnitCode" text NOT NULL DEFAULT '',
+          "IsMandatory" boolean NOT NULL DEFAULT true, "MinValue" numeric(18,4) NULL, "MaxValue" numeric(18,4) NULL,
+          "Options" text NOT NULL DEFAULT '', "FailureAction" text NOT NULL DEFAULT 'None');
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_WorkTemplateFields_Template_FieldCode"
+          ON "WorkTemplateFields" ("WorkTemplateId","FieldCode");
+
+        CREATE TABLE IF NOT EXISTS "MaintenancePlanTemplates" (
+          "Id" uuid PRIMARY KEY, "MaintenancePlanId" uuid NOT NULL, "WorkTemplateId" uuid NOT NULL,
+          "Sequence" integer NOT NULL DEFAULT 0, "IsMandatory" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenancePlanTemplates_Plan_Template"
+          ON "MaintenancePlanTemplates" ("MaintenancePlanId","WorkTemplateId");
+
+        CREATE TABLE IF NOT EXISTS "WorkTemplateInstances" (
+          "Id" uuid PRIMARY KEY, "JobCardId" uuid NOT NULL, "WorkItemId" uuid NOT NULL, "WorkTemplateId" uuid NOT NULL,
+          "TemplateCode" text NOT NULL DEFAULT '', "TemplateName" text NOT NULL DEFAULT '',
+          "TemplateVersion" integer NOT NULL DEFAULT 1, "Status" text NOT NULL DEFAULT 'Not Started',
+          "CreatedAt" timestamptz NOT NULL DEFAULT now(), "CompletedAt" timestamptz NULL);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_WorkTemplateInstances_WorkItemId" ON "WorkTemplateInstances" ("WorkItemId");
+
+        CREATE TABLE IF NOT EXISTS "WorkTemplateFieldInstances" (
+          "Id" uuid PRIMARY KEY, "WorkTemplateInstanceId" uuid NOT NULL, "SourceTemplateFieldId" uuid NULL,
+          "SectionName" text NOT NULL DEFAULT 'General', "Sequence" integer NOT NULL DEFAULT 0,
+          "FieldCode" text NOT NULL DEFAULT '', "Label" text NOT NULL DEFAULT '', "FieldType" text NOT NULL DEFAULT 'Text',
+          "UnitCode" text NOT NULL DEFAULT '', "IsMandatory" boolean NOT NULL DEFAULT true,
+          "MinValue" numeric(18,4) NULL, "MaxValue" numeric(18,4) NULL, "Options" text NOT NULL DEFAULT '',
+          "FailureAction" text NOT NULL DEFAULT 'None', "Value" text NOT NULL DEFAULT '',
+          "Result" text NOT NULL DEFAULT 'Pending', "Remarks" text NOT NULL DEFAULT '',
+          "EvidenceReference" text NOT NULL DEFAULT '', "ExecutedAt" timestamptz NULL,
+          "ExecutedBy" text NOT NULL DEFAULT '');
     """);
 
 
@@ -436,11 +477,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.6.5" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.6.5" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -448,7 +489,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.6.5" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7" });
 });
 
 static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
@@ -665,6 +706,122 @@ app.MapPut("/api/pm/service-centres/{id:guid}", async (Guid id,ServiceCentreUpse
     await db.SaveChangesAsync();return Results.Ok(x);
 });
 
+
+app.MapGet("/api/work-templates", async (AppDbContext db) =>
+{
+    var rows=await db.WorkTemplates.AsNoTracking().OrderBy(x=>x.TemplateCode).Select(x=>new{
+        x.Id,x.TemplateCode,x.Name,x.Category,x.Description,x.Version,x.StandardHours,x.RequiredSkillCode,
+        x.RequiresHvAuthorization,x.RequiresQc,x.IsActive,
+        fieldCount=db.WorkTemplateFields.Count(f=>f.WorkTemplateId==x.Id)
+    }).ToListAsync();
+    return Results.Ok(rows);
+});
+app.MapPost("/api/work-templates", async (WorkTemplate r,AppDbContext db)=>
+{
+    r.Id=Guid.NewGuid();r.TemplateCode=r.TemplateCode.Trim().ToUpperInvariant();
+    if(string.IsNullOrWhiteSpace(r.TemplateCode)||string.IsNullOrWhiteSpace(r.Name))
+        return Results.BadRequest(new{message="Template code and name are required."});
+    if(await db.WorkTemplates.AnyAsync(x=>x.TemplateCode==r.TemplateCode))
+        return Results.Conflict(new{message="Template code already exists."});
+    db.WorkTemplates.Add(r);Audit(db,"CREATE","WorkTemplate",r.Id,r.TemplateCode);await db.SaveChangesAsync();return Results.Ok(r);
+});
+app.MapPut("/api/work-templates/{id:guid}", async (Guid id,WorkTemplate r,AppDbContext db)=>
+{
+    var x=await db.WorkTemplates.FindAsync(id);if(x is null)return Results.NotFound();
+    x.Name=r.Name;x.Category=r.Category;x.Description=r.Description;x.StandardHours=r.StandardHours;
+    x.RequiredSkillCode=r.RequiredSkillCode;x.RequiresHvAuthorization=r.RequiresHvAuthorization;
+    x.RequiresQc=r.RequiresQc;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
+});
+app.MapGet("/api/work-templates/{id:guid}/fields", async (Guid id,AppDbContext db) =>
+    Results.Ok(await db.WorkTemplateFields.AsNoTracking().Where(x=>x.WorkTemplateId==id).OrderBy(x=>x.Sequence).ToListAsync()));
+app.MapPut("/api/work-templates/{id:guid}/fields", async (Guid id,List<WorkTemplateFieldInput> rows,AppDbContext db)=>
+{
+    var t=await db.WorkTemplates.FindAsync(id);if(t is null)return Results.NotFound();
+    var old=await db.WorkTemplateFields.Where(x=>x.WorkTemplateId==id).ToListAsync();db.WorkTemplateFields.RemoveRange(old);
+    var seq=0;
+    foreach(var r in rows)
+    {
+        seq++;var code=string.IsNullOrWhiteSpace(r.FieldCode)?$"F{seq:D3}":r.FieldCode.Trim().ToUpperInvariant();
+        db.WorkTemplateFields.Add(new WorkTemplateField{
+            WorkTemplateId=id,SectionName=string.IsNullOrWhiteSpace(r.SectionName)?"General":r.SectionName,
+            Sequence=r.Sequence<=0?seq*10:r.Sequence,FieldCode=code,Label=r.Label,FieldType=r.FieldType,
+            UnitCode=r.UnitCode,IsMandatory=r.IsMandatory,MinValue=r.MinValue,MaxValue=r.MaxValue,
+            Options=r.Options,FailureAction=r.FailureAction});
+    }
+    t.Version+=1;await db.SaveChangesAsync();return Results.Ok(new{version=t.Version,fields=rows.Count});
+});
+
+app.MapGet("/api/pm/plans/{id:guid}/templates", async (Guid id,AppDbContext db)=>
+{
+    var rows=await(from m in db.MaintenancePlanTemplates.AsNoTracking()
+        join t in db.WorkTemplates.AsNoTracking() on m.WorkTemplateId equals t.Id
+        where m.MaintenancePlanId==id orderby m.Sequence
+        select new{m.Id,m.Sequence,m.IsMandatory,m.WorkTemplateId,t.TemplateCode,t.Name,t.Category,t.Version,
+            t.StandardHours,t.RequiredSkillCode,t.RequiresHvAuthorization,t.RequiresQc,
+            fieldCount=db.WorkTemplateFields.Count(f=>f.WorkTemplateId==t.Id)}).ToListAsync();
+    return Results.Ok(rows);
+});
+app.MapPost("/api/pm/plans/{id:guid}/template", async (Guid id,MaintenancePlanTemplate r,AppDbContext db)=>
+{
+    if(!await db.MaintenancePlans.AnyAsync(x=>x.Id==id)||!await db.WorkTemplates.AnyAsync(x=>x.Id==r.WorkTemplateId))
+        return Results.BadRequest(new{message="Plan or work template not found."});
+    var x=await db.MaintenancePlanTemplates.FirstOrDefaultAsync(m=>m.MaintenancePlanId==id&&m.WorkTemplateId==r.WorkTemplateId);
+    if(x is null){x=new MaintenancePlanTemplate{MaintenancePlanId=id,WorkTemplateId=r.WorkTemplateId};db.MaintenancePlanTemplates.Add(x);}
+    x.Sequence=r.Sequence;x.IsMandatory=r.IsMandatory;await db.SaveChangesAsync();return Results.Ok(x);
+});
+app.MapDelete("/api/pm/plans/{planId:guid}/template/{mappingId:guid}", async(Guid planId,Guid mappingId,AppDbContext db)=>
+{
+    var x=await db.MaintenancePlanTemplates.FirstOrDefaultAsync(m=>m.Id==mappingId&&m.MaintenancePlanId==planId);
+    if(x is null)return Results.NotFound();db.MaintenancePlanTemplates.Remove(x);await db.SaveChangesAsync();return Results.NoContent();
+});
+
+app.MapGet("/api/tasks/{workItemId:guid}/paper-form", async(Guid workItemId,AppDbContext db)=>
+{
+    var instance=await db.WorkTemplateInstances.AsNoTracking().FirstOrDefaultAsync(x=>x.WorkItemId==workItemId);
+    if(instance is null)return Results.NotFound(new{message="No work template is attached to this task."});
+    var fields=await db.WorkTemplateFieldInstances.AsNoTracking().Where(x=>x.WorkTemplateInstanceId==instance.Id).OrderBy(x=>x.Sequence).ToListAsync();
+    return Results.Ok(new{instance,fields});
+});
+app.MapPut("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}", async(Guid workItemId,Guid fieldId,WorkTemplateFieldResultRequest r,AppDbContext db)=>
+{
+    var instance=await db.WorkTemplateInstances.FirstOrDefaultAsync(x=>x.WorkItemId==workItemId);if(instance is null)return Results.NotFound();
+    var f=await db.WorkTemplateFieldInstances.FirstOrDefaultAsync(x=>x.Id==fieldId&&x.WorkTemplateInstanceId==instance.Id);if(f is null)return Results.NotFound();
+    f.Value=r.Value;f.Result=r.Result;f.Remarks=r.Remarks;f.EvidenceReference=r.EvidenceReference;f.ExecutedBy=r.ExecutedBy;f.ExecutedAt=DateTime.UtcNow;
+    if(instance.Status=="Not Started")instance.Status="In Progress";
+    Defect? defect=null;
+    var failed=string.Equals(r.Result,"Fail",StringComparison.OrdinalIgnoreCase)||string.Equals(r.Result,"Not OK",StringComparison.OrdinalIgnoreCase);
+    if(failed&&string.Equals(f.FailureAction,"Create Defect",StringComparison.OrdinalIgnoreCase))
+    {
+        var wi=await db.WorkItems.FindAsync(workItemId);
+        if(wi!=null)
+        {
+            var job=await db.JobCards.FindAsync(wi.JobCardId);var evt=job==null?null:await db.ServiceEvents.FindAsync(job.ServiceEventId);
+            if(job!=null&&evt!=null)
+            {
+                defect=new Defect{VehicleId=evt.VehicleId,JobCardId=job.Id,WorkItemId=wi.Id,
+                    DefectNumber=$"DF-{DateTime.UtcNow:yyyy}-{(await db.Defects.CountAsync()+1):D6}",
+                    Category="Work Template",Severity="Major",
+                    Description=$"{instance.TemplateName}: {f.Label} - {r.Value}",Disposition="Open"};
+                db.Defects.Add(defect);
+            }
+        }
+    }
+    await db.SaveChangesAsync();return Results.Ok(new{field=f,defect});
+});
+app.MapPost("/api/tasks/{workItemId:guid}/paper-form/complete", async(Guid workItemId,AppDbContext db)=>
+{
+    var instance=await db.WorkTemplateInstances.FirstOrDefaultAsync(x=>x.WorkItemId==workItemId);if(instance is null)return Results.NotFound();
+    var fields=await db.WorkTemplateFieldInstances.Where(x=>x.WorkTemplateInstanceId==instance.Id).ToListAsync();
+    var missing=fields.Where(x=>x.IsMandatory&&(string.IsNullOrWhiteSpace(x.Value)||x.Result=="Pending")).Select(x=>x.Label).ToList();
+    if(missing.Count>0)return Results.Conflict(new{message="Complete all mandatory checklist items.",missing});
+    if(fields.Any(x=>string.Equals(x.FailureAction,"Block Completion",StringComparison.OrdinalIgnoreCase)
+        &&(string.Equals(x.Result,"Fail",StringComparison.OrdinalIgnoreCase)||string.Equals(x.Result,"Not OK",StringComparison.OrdinalIgnoreCase))))
+        return Results.Conflict(new{message="A failed checklist item is configured to block task completion."});
+    instance.Status="Completed";instance.CompletedAt=DateTime.UtcNow;
+    var task=await db.WorkItems.FindAsync(workItemId);if(task!=null){task.Status="Completed";task.UpdatedAt=DateTime.UtcNow;}
+    await db.SaveChangesAsync();return Results.Ok(instance);
+});
+
 app.MapGet("/api/pm/programs", async (AppDbContext db) => Results.Ok(await db.MaintenancePrograms.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
 app.MapPost("/api/pm/programs", async (MaintenanceProgram r,AppDbContext db)=>
 {
@@ -674,8 +831,8 @@ app.MapPut("/api/pm/programs/{id:guid}",async(Guid id,MaintenanceProgram r,AppDb
 
 app.MapGet("/api/pm/plans", async (AppDbContext db) =>
 {
-    var plans=await db.MaintenancePlans.AsNoTracking().OrderBy(x=>x.Sequence).ThenBy(x=>x.PlanCode).ToListAsync();var triggers=await db.MaintenancePlanTriggers.AsNoTracking().ToListAsync();var tasks=await db.MaintenancePlanTasks.AsNoTracking().ToListAsync();
-    return Results.Ok(plans.Select(x=>new{x.Id,x.MaintenanceProgramId,x.PlanCode,x.Name,x.Description,x.RecurrenceBasis,x.Sequence,x.IsActive,triggers=triggers.Where(t=>t.MaintenancePlanId==x.Id),taskCount=tasks.Count(t=>t.MaintenancePlanId==x.Id)}));
+    var plans=await db.MaintenancePlans.AsNoTracking().OrderBy(x=>x.Sequence).ThenBy(x=>x.PlanCode).ToListAsync();var triggers=await db.MaintenancePlanTriggers.AsNoTracking().ToListAsync();var tasks=await db.MaintenancePlanTasks.AsNoTracking().ToListAsync();var templates=await db.MaintenancePlanTemplates.AsNoTracking().ToListAsync();
+    return Results.Ok(plans.Select(x=>new{x.Id,x.MaintenanceProgramId,x.PlanCode,x.Name,x.Description,x.RecurrenceBasis,x.Sequence,x.IsActive,triggers=triggers.Where(t=>t.MaintenancePlanId==x.Id),taskCount=tasks.Count(t=>t.MaintenancePlanId==x.Id),templateCount=templates.Count(t=>t.MaintenancePlanId==x.Id)}));
 });
 app.MapPost("/api/pm/plans",async(MaintenancePlan r,AppDbContext db)=>{r.Id=Guid.NewGuid();r.PlanCode=r.PlanCode.Trim().ToUpperInvariant();if(!await db.MaintenancePrograms.AnyAsync(x=>x.Id==r.MaintenanceProgramId))return Results.BadRequest(new{message="Maintenance program not found."});if(await db.MaintenancePlans.AnyAsync(x=>x.MaintenanceProgramId==r.MaintenanceProgramId&&x.PlanCode==r.PlanCode))return Results.Conflict(new{message="Plan code already exists in this program."});db.MaintenancePlans.Add(r);await db.SaveChangesAsync();return Results.Ok(r);});
 app.MapPost("/api/pm/plans/{id:guid}/trigger",async(Guid id,MaintenancePlanTrigger r,AppDbContext db)=>{if(!await db.MaintenancePlans.AnyAsync(x=>x.Id==id))return Results.NotFound();var code=r.TriggerCode.Trim().ToUpperInvariant();var x=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(t=>t.MaintenancePlanId==id&&t.TriggerCode==code);if(x is null){x=new MaintenancePlanTrigger{MaintenancePlanId=id,TriggerCode=code};db.MaintenancePlanTriggers.Add(x);}x.IntervalValue=r.IntervalValue;x.InitialDueValue=r.InitialDueValue;x.UnitCode=r.UnitCode;x.WarningValue=r.WarningValue;x.ToleranceValue=r.ToleranceValue;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);});
@@ -807,8 +964,35 @@ app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbCo
         var po=await db.PmObligations.FindAsync(a.PmObligationId.Value);
         if(po?.MaintenancePlanId is Guid planId)
         {
-            var mapped=await(from m in db.MaintenancePlanTasks where m.MaintenancePlanId==planId join sm in db.ServiceTaskMasters on m.ServiceTaskMasterId equals sm.Id orderby m.Sequence select new{m,sm}).ToListAsync();
-            var seq=0;foreach(var x in mapped){seq++;db.WorkItems.Add(new WorkItem{JobCardId=jc.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-{seq:D2}",WorkType="PM",Description=x.sm.Name,Status="Not Started",Priority=a.Priority,EstimatedHours=x.sm.StandardHours,StandardRepairHours=x.sm.StandardHours,RequiresQc=x.sm.RequiresQc,RequiresHvAuthorization=x.sm.RequiresHvAuthorization,UpdatedAt=DateTime.UtcNow});}
+            var templateMappings=await(from m in db.MaintenancePlanTemplates where m.MaintenancePlanId==planId
+                join wt in db.WorkTemplates on m.WorkTemplateId equals wt.Id where wt.IsActive orderby m.Sequence select new{m,wt}).ToListAsync();
+            if(templateMappings.Count>0)
+            {
+                var seq=0;
+                foreach(var x in templateMappings)
+                {
+                    seq++;
+                    var wi=new WorkItem{JobCardId=jc.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-{seq:D2}",
+                        WorkType=x.wt.Category,Description=x.wt.Name,Status="Not Started",Priority=a.Priority,
+                        EstimatedHours=x.wt.StandardHours,StandardRepairHours=x.wt.StandardHours,
+                        RequiresQc=x.wt.RequiresQc,RequiresHvAuthorization=x.wt.RequiresHvAuthorization,UpdatedAt=DateTime.UtcNow};
+                    db.WorkItems.Add(wi);
+                    var inst=new WorkTemplateInstance{JobCardId=jc.Id,WorkItemId=wi.Id,WorkTemplateId=x.wt.Id,
+                        TemplateCode=x.wt.TemplateCode,TemplateName=x.wt.Name,TemplateVersion=x.wt.Version};
+                    db.WorkTemplateInstances.Add(inst);
+                    var fields=await db.WorkTemplateFields.AsNoTracking().Where(f=>f.WorkTemplateId==x.wt.Id).OrderBy(f=>f.Sequence).ToListAsync();
+                    foreach(var f in fields)
+                        db.WorkTemplateFieldInstances.Add(new WorkTemplateFieldInstance{WorkTemplateInstanceId=inst.Id,
+                            SourceTemplateFieldId=f.Id,SectionName=f.SectionName,Sequence=f.Sequence,FieldCode=f.FieldCode,
+                            Label=f.Label,FieldType=f.FieldType,UnitCode=f.UnitCode,IsMandatory=f.IsMandatory,
+                            MinValue=f.MinValue,MaxValue=f.MaxValue,Options=f.Options,FailureAction=f.FailureAction});
+                }
+            }
+            else
+            {
+                var mapped=await(from m in db.MaintenancePlanTasks where m.MaintenancePlanId==planId join sm in db.ServiceTaskMasters on m.ServiceTaskMasterId equals sm.Id orderby m.Sequence select new{m,sm}).ToListAsync();
+                var seq=0;foreach(var x in mapped){seq++;db.WorkItems.Add(new WorkItem{JobCardId=jc.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-{seq:D2}",WorkType="PM",Description=x.sm.Name,Status="Not Started",Priority=a.Priority,EstimatedHours=x.sm.StandardHours,StandardRepairHours=x.sm.StandardHours,RequiresQc=x.sm.RequiresQc,RequiresHvAuthorization=x.sm.RequiresHvAuthorization,UpdatedAt=DateTime.UtcNow});}
+            }
         }
     }
     db.VehicleAvailabilityLedger.Add(new VehicleAvailabilityLedger{VehicleId=v.Id,State="Under Maintenance",StartAt=DateTime.UtcNow,
@@ -854,7 +1038,8 @@ app.MapGet("/api/tasks", async (Guid? jobCardId, AppDbContext db) =>
                     orderby t.DueAt,t.TaskCode
                     select new{t.Id,t.TaskCode,t.JobCardId,jobCard=j.JobCardNumber,vehicle=v.RegistrationNumber,t.WorkType,t.Description,t.Status,
                         t.AssignedToTechnicianId,t.AssignedTo,t.PlannedStartAt,t.DueAt,t.Priority,t.DependencyTaskId,t.EstimatedHours,t.ActualHours,
-                        t.EvidenceReference,t.CompletionRemarks,t.RequiresQc,t.RequiresHvAuthorization,t.UpdatedAt}).ToListAsync();
+                        t.EvidenceReference,t.CompletionRemarks,t.RequiresQc,t.RequiresHvAuthorization,t.UpdatedAt,
+                        hasPaperForm=db.WorkTemplateInstances.Any(w=>w.WorkItemId==t.Id)}).ToListAsync();
     return Results.Ok(rows);
 });
 
