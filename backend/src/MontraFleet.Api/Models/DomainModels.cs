@@ -176,6 +176,8 @@ public class Defect
     public Guid VehicleId { get; set; }
     public Guid JobCardId { get; set; }
     public Guid? WorkItemId { get; set; }
+    public Guid? ChecklistFieldInstanceId { get; set; }
+    public Guid? CorrectiveWorkItemId { get; set; }
     public string DefectNumber { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
     public string Severity { get; set; } = "Minor";
@@ -579,6 +581,7 @@ public class WorkTemplateField
     public decimal? MaxValue { get; set; }
     public string Options { get; set; } = string.Empty;
     public string FailureAction { get; set; } = "None";
+    public string SuggestedIssueCode { get; set; } = string.Empty;
 }
 
 public class MaintenancePlanTemplate
@@ -620,6 +623,7 @@ public class WorkTemplateFieldInstance
     public decimal? MaxValue { get; set; }
     public string Options { get; set; } = string.Empty;
     public string FailureAction { get; set; } = "None";
+    public string SuggestedIssueCode { get; set; } = string.Empty;
     public string Value { get; set; } = string.Empty;
     public string Result { get; set; } = "Pending";
     public string Remarks { get; set; } = string.Empty;
@@ -641,6 +645,7 @@ public class WorkTemplateFieldInput
     public decimal? MaxValue { get; set; }
     public string Options { get; set; } = string.Empty;
     public string FailureAction { get; set; } = "None";
+    public string SuggestedIssueCode { get; set; } = string.Empty;
 }
 
 public class WorkTemplateFieldResultRequest
@@ -650,6 +655,14 @@ public class WorkTemplateFieldResultRequest
     public string Remarks { get; set; } = string.Empty;
     public string EvidenceReference { get; set; } = string.Empty;
     public string ExecutedBy { get; set; } = "Technician";
+}
+
+public class TechnicianIssueRequest
+{
+    public string FailureCode { get; set; } = string.Empty;
+    public string EvidenceReference { get; set; } = string.Empty;
+    public string Remarks { get; set; } = string.Empty;
+    public string ReportedBy { get; set; } = "Technician";
 }
 
 public class MaintenanceProgram
