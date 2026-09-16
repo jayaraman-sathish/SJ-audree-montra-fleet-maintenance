@@ -671,6 +671,7 @@ public class TechnicianIssueRequest
 public class MaintenanceTaskDefinition
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid? MaintenanceProgramId { get; set; }
     public string SectionName { get; set; } = string.Empty;
     public string TaskCode { get; set; } = string.Empty;
     public string TaskName { get; set; } = string.Empty;
@@ -686,6 +687,7 @@ public class MaintenanceTaskDefinition
 public class MaintenancePlanMatrixItem
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    public string ActionCode { get; set; } = string.Empty;
     public Guid MaintenancePlanId { get; set; }
     public Guid MaintenanceTaskDefinitionId { get; set; }
     public int Sequence { get; set; }
@@ -729,6 +731,7 @@ public class PmServiceLevelRequest
 public class PmMatrixAssignmentInput
 {
     public string PlanCode { get; set; } = string.Empty;
+    public string ActionCode { get; set; } = string.Empty;
     public string TaskCode { get; set; } = string.Empty;
     public int Sequence { get; set; }
     public bool IsMandatory { get; set; } = true;
