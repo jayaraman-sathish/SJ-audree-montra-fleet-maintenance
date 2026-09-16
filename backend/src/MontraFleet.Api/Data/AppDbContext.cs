@@ -23,6 +23,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MaintenancePlan> MaintenancePlans => Set<MaintenancePlan>();
     public DbSet<MaintenancePlanTrigger> MaintenancePlanTriggers => Set<MaintenancePlanTrigger>();
     public DbSet<MaintenancePlanTask> MaintenancePlanTasks => Set<MaintenancePlanTask>();
+    public DbSet<MaintenanceTaskDefinition> MaintenanceTaskDefinitions => Set<MaintenanceTaskDefinition>();
+    public DbSet<MaintenancePlanMatrixItem> MaintenancePlanMatrixItems => Set<MaintenancePlanMatrixItem>();
+    public DbSet<MaintenanceReplacementRule> MaintenanceReplacementRules => Set<MaintenanceReplacementRule>();
     public DbSet<PmObligation> PmObligations => Set<PmObligation>();
     public DbSet<Appointment> Appointments => Set<Appointment>();
     public DbSet<ServiceBay> ServiceBays => Set<ServiceBay>();
@@ -89,6 +92,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         m.Entity<MaintenancePlan>().HasIndex(x => new { x.MaintenanceProgramId, x.PlanCode }).IsUnique();
         m.Entity<MaintenancePlanTrigger>().HasIndex(x => new { x.MaintenancePlanId, x.TriggerCode }).IsUnique();
         m.Entity<MaintenancePlanTask>().HasIndex(x => new { x.MaintenancePlanId, x.ServiceTaskMasterId }).IsUnique();
+        m.Entity<MaintenanceTaskDefinition>().HasIndex(x => x.TaskCode).IsUnique();
+        m.Entity<MaintenancePlanMatrixItem>().HasIndex(x => new { x.MaintenancePlanId, x.MaintenanceTaskDefinitionId }).IsUnique();
         m.Entity<Vehicle>().Property(x => x.PurchaseCost).HasPrecision(18, 2);
         m.Entity<Vehicle>().Property(x => x.EnergyKwh).HasPrecision(18, 2);
         m.Entity<VehicleModelMaster>().Property(x => x.GvwKg).HasPrecision(18, 2);

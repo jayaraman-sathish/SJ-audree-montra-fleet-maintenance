@@ -624,6 +624,9 @@ public class WorkTemplateFieldInstance
     public string Options { get; set; } = string.Empty;
     public string FailureAction { get; set; } = "None";
     public string SuggestedIssueCode { get; set; } = string.Empty;
+    public string ActionCode { get; set; } = string.Empty;
+    public string Specification { get; set; } = string.Empty;
+    public string Severity { get; set; } = string.Empty;
     public string Value { get; set; } = string.Empty;
     public string Result { get; set; } = "Pending";
     public string Remarks { get; set; } = string.Empty;
@@ -665,6 +668,76 @@ public class TechnicianIssueRequest
     public string ReportedBy { get; set; } = "Technician";
 }
 
+public class MaintenanceTaskDefinition
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string SectionName { get; set; } = string.Empty;
+    public string TaskCode { get; set; } = string.Empty;
+    public string TaskName { get; set; } = string.Empty;
+    public string ActionCode { get; set; } = "I";
+    public string Specification { get; set; } = string.Empty;
+    public string Severity { get; set; } = string.Empty;
+    public string UnitCode { get; set; } = string.Empty;
+    public string SuggestedIssueCode { get; set; } = string.Empty;
+    public int SortOrder { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class MaintenancePlanMatrixItem
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid MaintenancePlanId { get; set; }
+    public Guid MaintenanceTaskDefinitionId { get; set; }
+    public int Sequence { get; set; }
+    public bool IsMandatory { get; set; } = true;
+}
+
+public class MaintenanceReplacementRule
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Platform { get; set; } = string.Empty;
+    public string SystemName { get; set; } = string.Empty;
+    public string ItemName { get; set; } = string.Empty;
+    public string PartNumber { get; set; } = string.Empty;
+    public string ActionCode { get; set; } = "R";
+    public decimal? UsageInterval { get; set; }
+    public string UsageUnit { get; set; } = string.Empty;
+    public int? IntervalMonths { get; set; }
+    public decimal? Quantity { get; set; }
+    public string Notes { get; set; } = string.Empty;
+    public bool IsActive { get; set; } = true;
+}
+
+public class PmServiceLevelRequest
+{
+    public Guid? Id { get; set; }
+    public string PlanCode { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public int Sequence { get; set; }
+    public string UsageTriggerCode { get; set; } = "ODOMETER";
+    public decimal? UsageInterval { get; set; }
+    public string UsageUnit { get; set; } = "KM";
+    public decimal? WarningUsage { get; set; }
+    public int? CalendarMonths { get; set; }
+    public int? WarningDays { get; set; }
+    public bool IsActive { get; set; } = true;
+}
+
+public class PmMatrixAssignmentInput
+{
+    public string PlanCode { get; set; } = string.Empty;
+    public string TaskCode { get; set; } = string.Empty;
+    public int Sequence { get; set; }
+    public bool IsMandatory { get; set; } = true;
+}
+
+public class PmProgramMatrixImportRequest
+{
+    public List<PmServiceLevelRequest> Levels { get; set; } = new();
+    public List<MaintenanceTaskDefinition> Tasks { get; set; } = new();
+    public List<PmMatrixAssignmentInput> Assignments { get; set; } = new();
+}
+
 public class MaintenanceProgram
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -701,12 +774,6 @@ public class MaintenancePlanTrigger
     public decimal WarningValue { get; set; }
     public decimal ToleranceValue { get; set; }
     public bool IsActive { get; set; } = true;
-}
-
-public class MaintenancePlanConfigurationRequest
-{
-    public List<MaintenancePlanTrigger> Triggers { get; set; } = new();
-    public List<MaintenancePlanTemplate> Templates { get; set; } = new();
 }
 
 public class MaintenancePlanTask

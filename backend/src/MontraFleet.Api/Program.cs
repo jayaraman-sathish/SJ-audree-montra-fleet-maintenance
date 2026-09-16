@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using MontraFleet.Api.Data;
 using MontraFleet.Api.Models;
@@ -302,6 +303,27 @@ using (var scope = app.Services.CreateScope())
         ALTER TABLE "Defects" ADD COLUMN IF NOT EXISTS "ChecklistFieldInstanceId" uuid NULL;
         ALTER TABLE "Defects" ADD COLUMN IF NOT EXISTS "CorrectiveWorkItemId" uuid NULL;
         CREATE INDEX IF NOT EXISTS "IX_Defects_ChecklistFieldInstanceId" ON "Defects" ("ChecklistFieldInstanceId");
+        ALTER TABLE "WorkTemplateFieldInstances" ADD COLUMN IF NOT EXISTS "ActionCode" text NOT NULL DEFAULT '';
+        ALTER TABLE "WorkTemplateFieldInstances" ADD COLUMN IF NOT EXISTS "Specification" text NOT NULL DEFAULT '';
+        ALTER TABLE "WorkTemplateFieldInstances" ADD COLUMN IF NOT EXISTS "Severity" text NOT NULL DEFAULT '';
+
+        CREATE TABLE IF NOT EXISTS "MaintenanceTaskDefinitions" (
+          "Id" uuid PRIMARY KEY, "SectionName" text NOT NULL DEFAULT '', "TaskCode" text NOT NULL,
+          "TaskName" text NOT NULL DEFAULT '', "ActionCode" text NOT NULL DEFAULT 'I', "Specification" text NOT NULL DEFAULT '',
+          "Severity" text NOT NULL DEFAULT '', "UnitCode" text NOT NULL DEFAULT '', "SuggestedIssueCode" text NOT NULL DEFAULT '',
+          "SortOrder" integer NOT NULL DEFAULT 0, "IsActive" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenanceTaskDefinitions_TaskCode" ON "MaintenanceTaskDefinitions" ("TaskCode");
+
+        CREATE TABLE IF NOT EXISTS "MaintenancePlanMatrixItems" (
+          "Id" uuid PRIMARY KEY, "MaintenancePlanId" uuid NOT NULL, "MaintenanceTaskDefinitionId" uuid NOT NULL,
+          "Sequence" integer NOT NULL DEFAULT 0, "IsMandatory" boolean NOT NULL DEFAULT true);
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenancePlanMatrixItems_Plan_Task" ON "MaintenancePlanMatrixItems" ("MaintenancePlanId","MaintenanceTaskDefinitionId");
+
+        CREATE TABLE IF NOT EXISTS "MaintenanceReplacementRules" (
+          "Id" uuid PRIMARY KEY, "Platform" text NOT NULL DEFAULT '', "SystemName" text NOT NULL DEFAULT '',
+          "ItemName" text NOT NULL DEFAULT '', "PartNumber" text NOT NULL DEFAULT '', "ActionCode" text NOT NULL DEFAULT 'R',
+          "UsageInterval" numeric NULL, "UsageUnit" text NOT NULL DEFAULT '', "IntervalMonths" integer NULL,
+          "Quantity" numeric NULL, "Notes" text NOT NULL DEFAULT '', "IsActive" boolean NOT NULL DEFAULT true);
     """);
 
 
@@ -371,6 +393,138 @@ using (var scope = app.Services.CreateScope())
     };
     foreach(var o in seedOptions)
         if(!await db.MasterOptions.AnyAsync(x=>x.Category==o.Category&&x.Code==o.Code)) db.MasterOptions.Add(o);
+    await db.SaveChangesAsync();
+
+    var montraTasks=new[]{
+        new MaintenanceTaskDefinition{SectionName="Air / Brake System",TaskCode="BRK-01",TaskName="Brake lining / pad thickness",ActionCode="M",Specification="5–30 mm",Severity="Critical",UnitCode="mm",SuggestedIssueCode="BRK-PAD",SortOrder=10},
+        new MaintenanceTaskDefinition{SectionName="Air / Brake System",TaskCode="BRK-02",TaskName="Brake chamber",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=20},
+        new MaintenanceTaskDefinition{SectionName="Air / Brake System",TaskCode="BRK-03",TaskName="Air pressure build-up",ActionCode="M",Specification="7–12 bar",Severity="Critical",UnitCode="bar",SuggestedIssueCode="",SortOrder=30},
+        new MaintenanceTaskDefinition{SectionName="Air / Brake System",TaskCode="BRK-04",TaskName="Air leakage",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=40},
+        new MaintenanceTaskDefinition{SectionName="Air / Brake System",TaskCode="BRK-05",TaskName="Hoses and valves",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=50},
+        new MaintenanceTaskDefinition{SectionName="Air / Brake System",TaskCode="BRK-06",TaskName="Parking brake",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=60},
+        new MaintenanceTaskDefinition{SectionName="Air / Brake System",TaskCode="BRK-07",TaskName="ABS/EBS warning indication",ActionCode="D",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=70},
+        new MaintenanceTaskDefinition{SectionName="Air / Brake System",TaskCode="BRK-08",TaskName="Brake balance functional check",ActionCode="F",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=80},
+        new MaintenanceTaskDefinition{SectionName="Axles / Driveline",TaskCode="AXL-01",TaskName="Front axle",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=90},
+        new MaintenanceTaskDefinition{SectionName="Axles / Driveline",TaskCode="AXL-02",TaskName="Rear axle(s)",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=100},
+        new MaintenanceTaskDefinition{SectionName="Axles / Driveline",TaskCode="AXL-03",TaskName="Differential",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=110},
+        new MaintenanceTaskDefinition{SectionName="Axles / Driveline",TaskCode="AXL-04",TaskName="Hub and bearing",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=120},
+        new MaintenanceTaskDefinition{SectionName="Axles / Driveline",TaskCode="AXL-05",TaskName="Leakage",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=130},
+        new MaintenanceTaskDefinition{SectionName="Axles / Driveline",TaskCode="AXL-06",TaskName="Driveline play",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=140},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-01",TaskName="Battery pack physical condition",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=150},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-02",TaskName="Battery mounting and protection",ActionCode="T",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=160},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-03",TaskName="HV cables and harness condition",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=170},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-04",TaskName="HV connectors and locking",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=180},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-05",TaskName="Signs of overheating, arcing or damage",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=190},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-06",TaskName="Battery temperature reading",ActionCode="M",Specification="5–45 °C",Severity="Major",UnitCode="°C",SuggestedIssueCode="BATT-TEMP",SortOrder=200},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-07",TaskName="State of charge",ActionCode="M",Specification="0–100 %",Severity="",UnitCode="%",SuggestedIssueCode="",SortOrder=210},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-08",TaskName="State of health",ActionCode="M",Specification="80–100 %",Severity="Major",UnitCode="%",SuggestedIssueCode="",SortOrder=220},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-09",TaskName="Cell imbalance indication",ActionCode="D",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=230},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-10",TaskName="Isolation / insulation status",ActionCode="D",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="HV-ISO",SortOrder=240},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-11",TaskName="Battery cooling system condition",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=250},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-12",TaskName="Coolant leakage",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="COOL-HOSE",SortOrder=260},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-13",TaskName="Battery warning or fault indication",ActionCode="D",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=270},
+        new MaintenanceTaskDefinition{SectionName="Battery & High-Voltage System",TaskCode="BAT-14",TaskName="Battery communication status",ActionCode="D",Specification="",Severity="Major",UnitCode="mm",SuggestedIssueCode="",SortOrder=280},
+        new MaintenanceTaskDefinition{SectionName="Body & Safety",TaskCode="BOD-01",TaskName="Driver seat and mounting",ActionCode="T",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=290},
+        new MaintenanceTaskDefinition{SectionName="Body & Safety",TaskCode="BOD-02",TaskName="Body panels and doors",ActionCode="I",Specification="",Severity="Minor",UnitCode="",SuggestedIssueCode="",SortOrder=300},
+        new MaintenanceTaskDefinition{SectionName="Body & Safety",TaskCode="BOD-03",TaskName="Mirrors",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=310},
+        new MaintenanceTaskDefinition{SectionName="Body & Safety",TaskCode="BOD-04",TaskName="Windscreen",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=320},
+        new MaintenanceTaskDefinition{SectionName="Body & Safety",TaskCode="BOD-05",TaskName="Wiper",ActionCode="I",Specification="",Severity="Minor",UnitCode="",SuggestedIssueCode="",SortOrder=330},
+        new MaintenanceTaskDefinition{SectionName="Cabin & Safety",TaskCode="CAB-01",TaskName="Steering",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=340},
+        new MaintenanceTaskDefinition{SectionName="Cabin & Safety",TaskCode="CAB-02",TaskName="Seat and seat belt",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=350},
+        new MaintenanceTaskDefinition{SectionName="Cabin & Safety",TaskCode="CAB-03",TaskName="Mirrors",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=360},
+        new MaintenanceTaskDefinition{SectionName="Cabin & Safety",TaskCode="CAB-04",TaskName="Windscreen and wipers",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=370},
+        new MaintenanceTaskDefinition{SectionName="Cabin & Safety",TaskCode="CAB-05",TaskName="HVAC",ActionCode="I",Specification="",Severity="Minor",UnitCode="",SuggestedIssueCode="",SortOrder=380},
+        new MaintenanceTaskDefinition{SectionName="Cabin & Safety",TaskCode="CAB-06",TaskName="Mandatory emergency equipment",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=390},
+        new MaintenanceTaskDefinition{SectionName="Charging System",TaskCode="CHG-01",TaskName="Charge inlet condition",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=400},
+        new MaintenanceTaskDefinition{SectionName="Charging System",TaskCode="CHG-02",TaskName="Charge connector condition",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=410},
+        new MaintenanceTaskDefinition{SectionName="Charging System",TaskCode="CHG-03",TaskName="Connector pins",ActionCode="T",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=420},
+        new MaintenanceTaskDefinition{SectionName="Charging System",TaskCode="CHG-04",TaskName="Locking mechanism",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=430},
+        new MaintenanceTaskDefinition{SectionName="Charging System",TaskCode="CHG-05",TaskName="Charging communication",ActionCode="D",Specification="",Severity="Major",UnitCode="mm",SuggestedIssueCode="",SortOrder=440},
+        new MaintenanceTaskDefinition{SectionName="Charging System",TaskCode="CHG-06",TaskName="Charging functional check",ActionCode="F",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=450},
+        new MaintenanceTaskDefinition{SectionName="Charging System",TaskCode="CHG-07",TaskName="Signs of overheating or burning",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=460},
+        new MaintenanceTaskDefinition{SectionName="Charging System",TaskCode="CHG-08",TaskName="Protective caps and covers",ActionCode="I",Specification="",Severity="Minor",UnitCode="",SuggestedIssueCode="",SortOrder=470},
+        new MaintenanceTaskDefinition{SectionName="Hydraulics",TaskCode="HYD-01",TaskName="Hydraulic oil level and condition",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=480},
+        new MaintenanceTaskDefinition{SectionName="Hydraulics",TaskCode="HYD-02",TaskName="Leakage",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=490},
+        new MaintenanceTaskDefinition{SectionName="Hydraulics",TaskCode="HYD-03",TaskName="Hoses",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=500},
+        new MaintenanceTaskDefinition{SectionName="Hydraulics",TaskCode="HYD-04",TaskName="Lift arms",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=510},
+        new MaintenanceTaskDefinition{SectionName="Hydraulics",TaskCode="HYD-05",TaskName="Lifting function",ActionCode="F",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=520},
+        new MaintenanceTaskDefinition{SectionName="Implement Attachment",TaskCode="IMP-01",TaskName="Three-point linkage",ActionCode="T",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=530},
+        new MaintenanceTaskDefinition{SectionName="Implement Attachment",TaskCode="IMP-02",TaskName="Top link and pins",ActionCode="T",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=540},
+        new MaintenanceTaskDefinition{SectionName="Implement Attachment",TaskCode="IMP-03",TaskName="Safety locking",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=550},
+        new MaintenanceTaskDefinition{SectionName="Low-Voltage Electrical",TaskCode="LV-01",TaskName="12 V auxiliary battery condition",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=560},
+        new MaintenanceTaskDefinition{SectionName="Low-Voltage Electrical",TaskCode="LV-02",TaskName="Battery terminals",ActionCode="I",Specification="",Severity="Minor",UnitCode="",SuggestedIssueCode="",SortOrder=570},
+        new MaintenanceTaskDefinition{SectionName="Low-Voltage Electrical",TaskCode="LV-03",TaskName="Headlamps",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=580},
+        new MaintenanceTaskDefinition{SectionName="Low-Voltage Electrical",TaskCode="LV-04",TaskName="Tail lamps",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=590},
+        new MaintenanceTaskDefinition{SectionName="Low-Voltage Electrical",TaskCode="LV-05",TaskName="Indicators and hazard lights",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=600},
+        new MaintenanceTaskDefinition{SectionName="Low-Voltage Electrical",TaskCode="LV-06",TaskName="Horn",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=610},
+        new MaintenanceTaskDefinition{SectionName="Low-Voltage Electrical",TaskCode="LV-07",TaskName="Instrument cluster",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=620},
+        new MaintenanceTaskDefinition{SectionName="Low-Voltage Electrical",TaskCode="LV-08",TaskName="Warning lamps",ActionCode="D",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=630},
+        new MaintenanceTaskDefinition{SectionName="Low-Voltage Electrical",TaskCode="LV-09",TaskName="Visible wiring harness condition",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=640},
+        new MaintenanceTaskDefinition{SectionName="Low-Voltage Electrical",TaskCode="LV-10",TaskName="Fuse and relay condition",ActionCode="I",Specification="",Severity="Minor",UnitCode="",SuggestedIssueCode="",SortOrder=650},
+        new MaintenanceTaskDefinition{SectionName="Motor & AMT",TaskCode="AMT-01",TaskName="Gearbox oil level and condition",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=660},
+        new MaintenanceTaskDefinition{SectionName="Motor & AMT",TaskCode="AMT-02",TaskName="Gearbox leakage",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=670},
+        new MaintenanceTaskDefinition{SectionName="Motor & AMT",TaskCode="AMT-03",TaskName="AMT operation",ActionCode="F",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=680},
+        new MaintenanceTaskDefinition{SectionName="Motor & AMT",TaskCode="AMT-04",TaskName="Gear-shift function",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=690},
+        new MaintenanceTaskDefinition{SectionName="Motor & AMT",TaskCode="AMT-05",TaskName="Transmission mounting",ActionCode="T",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=700},
+        new MaintenanceTaskDefinition{SectionName="Motor / Inverter / Controller",TaskCode="MOT-01",TaskName="Motor mounting",ActionCode="T",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=710},
+        new MaintenanceTaskDefinition{SectionName="Motor / Inverter / Controller",TaskCode="MOT-02",TaskName="Abnormal motor noise",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=720},
+        new MaintenanceTaskDefinition{SectionName="Motor / Inverter / Controller",TaskCode="MOT-03",TaskName="Motor vibration",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=730},
+        new MaintenanceTaskDefinition{SectionName="Motor / Inverter / Controller",TaskCode="MOT-04",TaskName="Motor temperature",ActionCode="M",Specification="0–90 °C",Severity="Major",UnitCode="°C",SuggestedIssueCode="",SortOrder=740},
+        new MaintenanceTaskDefinition{SectionName="Motor / Inverter / Controller",TaskCode="MOT-05",TaskName="Motor electrical connections",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=750},
+        new MaintenanceTaskDefinition{SectionName="Motor / Inverter / Controller",TaskCode="MOT-06",TaskName="Inverter / controller condition",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=760},
+        new MaintenanceTaskDefinition{SectionName="Motor / Inverter / Controller",TaskCode="MOT-07",TaskName="Cooling connections and leakage",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=770},
+        new MaintenanceTaskDefinition{SectionName="Motor / Inverter / Controller",TaskCode="MOT-08",TaskName="Fault indication / DTC review",ActionCode="D",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=780},
+        new MaintenanceTaskDefinition{SectionName="Motor / Inverter / Controller",TaskCode="MOT-09",TaskName="Regenerative braking functional check",ActionCode="F",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=790},
+        new MaintenanceTaskDefinition{SectionName="PTO",TaskCode="PTO-01",TaskName="PTO engagement",ActionCode="F",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=800},
+        new MaintenanceTaskDefinition{SectionName="PTO",TaskCode="PTO-02",TaskName="540 RPM mode operation",ActionCode="F",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=810},
+        new MaintenanceTaskDefinition{SectionName="PTO",TaskCode="PTO-03",TaskName="1000 RPM mode operation",ActionCode="F",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=820},
+        new MaintenanceTaskDefinition{SectionName="PTO",TaskCode="PTO-04",TaskName="PTO shaft condition",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=830},
+        new MaintenanceTaskDefinition{SectionName="PTO",TaskCode="PTO-05",TaskName="PTO guard",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=840},
+        new MaintenanceTaskDefinition{SectionName="Replacement — Battery & HV",TaskCode="RPL",TaskName="Battery coolant",ActionCode="R",Specification="interval TBC",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=850},
+        new MaintenanceTaskDefinition{SectionName="Steering & Suspension",TaskCode="STR-01",TaskName="Steering free play and operation",ActionCode="F",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=860},
+        new MaintenanceTaskDefinition{SectionName="Steering & Suspension",TaskCode="STR-02",TaskName="Front suspension condition",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=870},
+        new MaintenanceTaskDefinition{SectionName="Steering & Suspension",TaskCode="STR-03",TaskName="Rear suspension condition",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=880},
+        new MaintenanceTaskDefinition{SectionName="Steering & Suspension",TaskCode="STR-04",TaskName="Shock absorber condition",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=890},
+        new MaintenanceTaskDefinition{SectionName="Steering & Suspension",TaskCode="STR-05",TaskName="Mounting points",ActionCode="T",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=900},
+        new MaintenanceTaskDefinition{SectionName="Transmission",TaskCode="TRN-01",TaskName="Gear selection",ActionCode="F",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=910},
+        new MaintenanceTaskDefinition{SectionName="Transmission",TaskCode="TRN-02",TaskName="8F + 2R operation",ActionCode="F",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=920},
+        new MaintenanceTaskDefinition{SectionName="Transmission",TaskCode="TRN-03",TaskName="Transmission oil condition",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=930},
+        new MaintenanceTaskDefinition{SectionName="Transmission",TaskCode="TRN-04",TaskName="Leakage",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=940},
+        new MaintenanceTaskDefinition{SectionName="Tyres / Chassis / Coupling",TaskCode="TYR-01",TaskName="Tyre pressure — front left",ActionCode="M",Specification="90–130 psi",Severity="Major",UnitCode="bar",SuggestedIssueCode="",SortOrder=950},
+        new MaintenanceTaskDefinition{SectionName="Tyres / Chassis / Coupling",TaskCode="TYR-02",TaskName="Tyre pressure — front right",ActionCode="M",Specification="90–130 psi",Severity="Major",UnitCode="bar",SuggestedIssueCode="",SortOrder=960},
+        new MaintenanceTaskDefinition{SectionName="Tyres / Chassis / Coupling",TaskCode="TYR-03",TaskName="Tread depth — minimum across axles",ActionCode="M",Specification="3–20 mm",Severity="Critical",UnitCode="mm",SuggestedIssueCode="",SortOrder=970},
+        new MaintenanceTaskDefinition{SectionName="Tyres / Chassis / Coupling",TaskCode="TYR-04",TaskName="Abnormal or uneven wear",ActionCode="I",Specification="",Severity="Major",UnitCode="",SuggestedIssueCode="",SortOrder=980},
+        new MaintenanceTaskDefinition{SectionName="Tyres / Chassis / Coupling",TaskCode="TYR-05",TaskName="Wheel alignment and fasteners",ActionCode="T",Specification="",Severity="Critical",UnitCode="Nm",SuggestedIssueCode="",SortOrder=990},
+        new MaintenanceTaskDefinition{SectionName="Tyres / Chassis / Coupling",TaskCode="TYR-06",TaskName="Frame cracks or deformation",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=1000},
+        new MaintenanceTaskDefinition{SectionName="Tyres / Chassis / Coupling",TaskCode="TYR-07",TaskName="Fifth wheel / kingpin coupling",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=1010},
+        new MaintenanceTaskDefinition{SectionName="Tyres / Chassis / Coupling",TaskCode="TYR-08",TaskName="Trailer electrical and air connections",ActionCode="I",Specification="",Severity="Critical",UnitCode="",SuggestedIssueCode="",SortOrder=1020}
+    };
+    foreach(var t in montraTasks)
+        if(!await db.MaintenanceTaskDefinitions.AnyAsync(x=>x.TaskCode==t.TaskCode)) db.MaintenanceTaskDefinitions.Add(t);
+    var montraReplacementRules=new[]{
+        new MaintenanceReplacementRule{Platform="All platforms",SystemName="Battery & HV",ItemName="Battery coolant",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Closed-loop circuit; check specification before renewal",IsActive=false},
+        new MaintenanceReplacementRule{Platform="All platforms",SystemName="Battery & HV",ItemName="HV service disconnect inspection seal",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Renew seal after any HV intervention",IsActive=false},
+        new MaintenanceReplacementRule{Platform="All platforms",SystemName="Motor / Inverter",ItemName="Motor & inverter coolant",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="May share the battery circuit on some variants",IsActive=false},
+        new MaintenanceReplacementRule{Platform="All platforms",SystemName="Low-Voltage",ItemName="12 V auxiliary battery",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Condition-based renewal is common; confirm policy",IsActive=false},
+        new MaintenanceReplacementRule{Platform="All platforms",SystemName="Cabin",ItemName="Cabin air filter",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Shorter interval in dusty duty cycles",IsActive=false},
+        new MaintenanceReplacementRule{Platform="Rhino MHCV",SystemName="Air / Brake",ItemName="Air dryer desiccant cartridge",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Critical to brake system moisture control",IsActive=false},
+        new MaintenanceReplacementRule{Platform="Rhino MHCV",SystemName="Air / Brake",ItemName="Brake fluid (hydraulic circuits where fitted)",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Hygroscopic; time-based not distance-based",IsActive=false},
+        new MaintenanceReplacementRule{Platform="Rhino MHCV",SystemName="Motor & AMT",ItemName="AMT gearbox oil and filter",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Confirm grade and fill volume with Montra",IsActive=false},
+        new MaintenanceReplacementRule{Platform="Rhino MHCV",SystemName="Axles / Driveline",ItemName="Differential oil",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="",IsActive=false},
+        new MaintenanceReplacementRule{Platform="Rhino MHCV",SystemName="Axles / Driveline",ItemName="Wheel bearing grease",PartNumber="",ActionCode="L",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Repack at overhaul interval",IsActive=false},
+        new MaintenanceReplacementRule{Platform="Rhino MHCV",SystemName="Tyres / Chassis",ItemName="Fifth wheel / kingpin grease",PartNumber="",ActionCode="L",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Shorter interval than the service ladder",IsActive=false},
+        new MaintenanceReplacementRule{Platform="EVIATOR SCV",SystemName="Brakes",ItemName="Brake fluid",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Time-based",IsActive=false},
+        new MaintenanceReplacementRule{Platform="EVIATOR SCV",SystemName="Brakes",ItemName="Brake pads / shoes",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Condition-based; measure at every service",IsActive=false},
+        new MaintenanceReplacementRule{Platform="EVIATOR SCV",SystemName="Steering & Suspension",ItemName="Steering linkage grease",PartNumber="",ActionCode="L",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="",IsActive=false},
+        new MaintenanceReplacementRule{Platform="Super Auto 3W",SystemName="Brakes",ItemName="Brake fluid",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Time-based",IsActive=false},
+        new MaintenanceReplacementRule{Platform="Super Auto 3W",SystemName="Brakes",ItemName="Brake shoes",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Condition-based",IsActive=false},
+        new MaintenanceReplacementRule{Platform="E-Tractor",SystemName="Hydraulics",ItemName="Hydraulic oil and filter",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Primary wear item on a tractor",IsActive=false},
+        new MaintenanceReplacementRule{Platform="E-Tractor",SystemName="Transmission",ItemName="Transmission oil",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Confirm grade for 8F + 2R gearbox",IsActive=false},
+        new MaintenanceReplacementRule{Platform="E-Tractor",SystemName="PTO",ItemName="PTO shaft grease",PartNumber="",ActionCode="L",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Short interval; guard must be refitted",IsActive=false},
+        new MaintenanceReplacementRule{Platform="E-Tractor",SystemName="Implement Attachment",ItemName="Three-point linkage pins and bushes",PartNumber="",ActionCode="R",UsageInterval=null,IntervalMonths=null,Quantity=null,Notes="Wear item under load",IsActive=false}
+    };
+    foreach(var r in montraReplacementRules)
+        if(!await db.MaintenanceReplacementRules.AnyAsync(x=>x.Platform==r.Platform&&x.ItemName==r.ItemName)) db.MaintenanceReplacementRules.Add(r);
     await db.SaveChangesAsync();
 
     async Task<VehicleModelMaster> EnsureModel(string code,string name,string type,string description="")
@@ -491,11 +645,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.4" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.5" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.4" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.5" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -503,7 +657,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.4" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.5" });
 });
 
 static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
@@ -817,7 +971,7 @@ app.MapGet("/api/tasks/{workItemId:guid}/paper-form", async(Guid workItemId,AppD
     var raw=await db.WorkTemplateFieldInstances.AsNoTracking().Where(x=>x.WorkTemplateInstanceId==instance.Id).OrderBy(x=>x.Sequence).ToListAsync();
     var fieldIds=raw.Select(x=>x.Id).ToList();
     var issueFieldIds=await db.Defects.AsNoTracking().Where(x=>x.ChecklistFieldInstanceId.HasValue&&fieldIds.Contains(x.ChecklistFieldInstanceId.Value)&&x.Disposition!="Closed").Select(x=>x.ChecklistFieldInstanceId!.Value).ToListAsync();
-    var fields=raw.Select(x=>new{x.Id,x.WorkTemplateInstanceId,x.SourceTemplateFieldId,x.SectionName,x.Sequence,x.FieldCode,x.Label,x.FieldType,x.UnitCode,x.IsMandatory,x.MinValue,x.MaxValue,x.Options,x.FailureAction,x.SuggestedIssueCode,x.Value,x.Result,x.Remarks,x.EvidenceReference,x.ExecutedAt,x.ExecutedBy,issueRecorded=issueFieldIds.Contains(x.Id)});
+    var fields=raw.Select(x=>new{x.Id,x.WorkTemplateInstanceId,x.SourceTemplateFieldId,x.SectionName,x.Sequence,x.FieldCode,x.Label,x.FieldType,x.UnitCode,x.IsMandatory,x.MinValue,x.MaxValue,x.Options,x.FailureAction,x.SuggestedIssueCode,x.ActionCode,x.Specification,x.Severity,x.Value,x.Result,x.Remarks,x.EvidenceReference,x.ExecutedAt,x.ExecutedBy,issueRecorded=issueFieldIds.Contains(x.Id)});
     return Results.Ok(new{instance,fields});
 });
 app.MapPut("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}", async(Guid workItemId,Guid fieldId,WorkTemplateFieldResultRequest r,AppDbContext db)=>
@@ -877,6 +1031,99 @@ app.MapPost("/api/tasks/{workItemId:guid}/paper-form/complete", async(Guid workI
     await db.SaveChangesAsync();return Results.Ok(instance);
 });
 
+
+app.MapGet("/api/pm/task-library", async (string? search,string? section,string? action,string? severity,AppDbContext db) =>
+{
+    var q=db.MaintenanceTaskDefinitions.AsNoTracking().Where(x=>x.IsActive).AsQueryable();
+    if(!string.IsNullOrWhiteSpace(search))q=q.Where(x=>x.TaskCode.Contains(search)||x.TaskName.Contains(search));
+    if(!string.IsNullOrWhiteSpace(section))q=q.Where(x=>x.SectionName==section);
+    if(!string.IsNullOrWhiteSpace(action))q=q.Where(x=>x.ActionCode==action);
+    if(!string.IsNullOrWhiteSpace(severity))q=q.Where(x=>x.Severity==severity);
+    return Results.Ok(await q.OrderBy(x=>x.SectionName).ThenBy(x=>x.SortOrder).ThenBy(x=>x.TaskCode).ToListAsync());
+});
+app.MapPost("/api/pm/task-library", async(MaintenanceTaskDefinition r,AppDbContext db)=>
+{
+    r.Id=Guid.NewGuid();r.TaskCode=r.TaskCode.Trim().ToUpperInvariant();
+    if(string.IsNullOrWhiteSpace(r.TaskCode)||string.IsNullOrWhiteSpace(r.TaskName))return Results.BadRequest(new{message="Task code and task name are required."});
+    if(await db.MaintenanceTaskDefinitions.AnyAsync(x=>x.TaskCode==r.TaskCode))return Results.Conflict(new{message="Task code already exists."});
+    db.MaintenanceTaskDefinitions.Add(r);await db.SaveChangesAsync();return Results.Ok(r);
+});
+app.MapPut("/api/pm/task-library/{id:guid}", async(Guid id,MaintenanceTaskDefinition r,AppDbContext db)=>
+{
+    var x=await db.MaintenanceTaskDefinitions.FindAsync(id);if(x is null)return Results.NotFound();
+    x.SectionName=r.SectionName;x.TaskName=r.TaskName;x.ActionCode=r.ActionCode;x.Specification=r.Specification;x.Severity=r.Severity;x.UnitCode=r.UnitCode;x.SuggestedIssueCode=r.SuggestedIssueCode;x.SortOrder=r.SortOrder;x.IsActive=r.IsActive;
+    await db.SaveChangesAsync();return Results.Ok(x);
+});
+app.MapPost("/api/pm/task-library/bulk", async(List<MaintenanceTaskDefinition> rows,AppDbContext db)=>
+{
+    foreach(var r in rows)
+    {
+        var code=r.TaskCode.Trim().ToUpperInvariant();if(string.IsNullOrWhiteSpace(code)||string.IsNullOrWhiteSpace(r.TaskName))continue;
+        var x=await db.MaintenanceTaskDefinitions.FirstOrDefaultAsync(t=>t.TaskCode==code);
+        if(x is null){r.Id=Guid.NewGuid();r.TaskCode=code;db.MaintenanceTaskDefinitions.Add(r);}else{x.SectionName=r.SectionName;x.TaskName=r.TaskName;x.ActionCode=r.ActionCode;x.Specification=r.Specification;x.Severity=r.Severity;x.UnitCode=r.UnitCode;x.SuggestedIssueCode=r.SuggestedIssueCode;x.SortOrder=r.SortOrder;x.IsActive=true;}
+    }
+    await db.SaveChangesAsync();return Results.Ok(await db.MaintenanceTaskDefinitions.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.SectionName).ThenBy(x=>x.SortOrder).ToListAsync());
+});
+app.MapGet("/api/pm/replacement-rules",async(AppDbContext db)=>Results.Ok(await db.MaintenanceReplacementRules.AsNoTracking().OrderBy(x=>x.Platform).ThenBy(x=>x.SystemName).ThenBy(x=>x.ItemName).ToListAsync()));
+app.MapPut("/api/pm/replacement-rules/{id:guid}",async(Guid id,MaintenanceReplacementRule r,AppDbContext db)=>{var x=await db.MaintenanceReplacementRules.FindAsync(id);if(x is null)return Results.NotFound();x.PartNumber=r.PartNumber;x.UsageInterval=r.UsageInterval;x.UsageUnit=r.UsageUnit;x.IntervalMonths=r.IntervalMonths;x.Quantity=r.Quantity;x.Notes=r.Notes;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);});
+
+app.MapGet("/api/pm/programs/{id:guid}/service-matrix", async(Guid id,AppDbContext db)=>
+{
+    var program=await db.MaintenancePrograms.AsNoTracking().FirstOrDefaultAsync(x=>x.Id==id);if(program is null)return Results.NotFound();
+    var plans=await db.MaintenancePlans.AsNoTracking().Where(x=>x.MaintenanceProgramId==id).OrderBy(x=>x.Sequence).ToListAsync();
+    var planIds=plans.Select(x=>x.Id).ToList();
+    var triggers=await db.MaintenancePlanTriggers.AsNoTracking().Where(x=>planIds.Contains(x.MaintenancePlanId)&&x.IsActive).ToListAsync();
+    var levels=plans.Select(p=>new{p.Id,p.PlanCode,p.Name,p.Sequence,p.IsActive,triggers=triggers.Where(t=>t.MaintenancePlanId==p.Id).Select(t=>new{t.Id,t.TriggerCode,t.IntervalValue,t.UnitCode,t.WarningValue,t.ToleranceValue})});
+    var taskRows=await db.MaintenanceTaskDefinitions.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.SectionName).ThenBy(x=>x.SortOrder).ThenBy(x=>x.TaskCode).ToListAsync();
+    var assignments=await db.MaintenancePlanMatrixItems.AsNoTracking().Where(x=>planIds.Contains(x.MaintenancePlanId)).ToListAsync();
+    return Results.Ok(new{program,levels,tasks=taskRows,assignments});
+});
+app.MapPut("/api/pm/programs/{id:guid}/service-ladder", async(Guid id,List<PmServiceLevelRequest> rows,AppDbContext db)=>
+{
+    if(!await db.MaintenancePrograms.AnyAsync(x=>x.Id==id))return Results.NotFound();
+    foreach(var r in rows.OrderBy(x=>x.Sequence))
+    {
+        var code=r.PlanCode.Trim().ToUpperInvariant();if(string.IsNullOrWhiteSpace(code))continue;
+        var p=await db.MaintenancePlans.FirstOrDefaultAsync(x=>x.MaintenanceProgramId==id&&x.PlanCode==code);
+        if(p is null){p=new MaintenancePlan{MaintenanceProgramId=id,PlanCode=code};db.MaintenancePlans.Add(p);}
+        p.Name=string.IsNullOrWhiteSpace(r.Name)?code:r.Name;p.Sequence=r.Sequence;p.IsActive=r.IsActive;p.RecurrenceBasis="ScheduledDue";
+        if(r.UsageInterval.HasValue&&r.UsageInterval.Value>0)
+        {
+            var trig=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(x=>x.MaintenancePlanId==p.Id&&x.TriggerCode==r.UsageTriggerCode);
+            if(trig is null){trig=new MaintenancePlanTrigger{MaintenancePlanId=p.Id,TriggerCode=r.UsageTriggerCode};db.MaintenancePlanTriggers.Add(trig);}trig.IntervalValue=r.UsageInterval.Value;trig.InitialDueValue=r.UsageInterval.Value;trig.UnitCode=r.UsageUnit;trig.WarningValue=r.WarningUsage??0;trig.ToleranceValue=0;trig.IsActive=true;
+        }
+        if(r.CalendarMonths.HasValue&&r.CalendarMonths.Value>0)
+        {
+            var time=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(x=>x.MaintenancePlanId==p.Id&&x.TriggerCode=="TIME");
+            if(time is null){time=new MaintenancePlanTrigger{MaintenancePlanId=p.Id,TriggerCode="TIME"};db.MaintenancePlanTriggers.Add(time);}time.IntervalValue=r.CalendarMonths.Value;time.InitialDueValue=r.CalendarMonths.Value;time.UnitCode="MONTH";time.WarningValue=r.WarningDays??0;time.ToleranceValue=0;time.IsActive=true;
+        }
+    }
+    await db.SaveChangesAsync();return Results.Ok();
+});
+app.MapPut("/api/pm/programs/{id:guid}/task-matrix", async(Guid id,List<MaintenancePlanMatrixItem> rows,AppDbContext db)=>
+{
+    var planIds=await db.MaintenancePlans.Where(x=>x.MaintenanceProgramId==id).Select(x=>x.Id).ToListAsync();if(planIds.Count==0)return Results.BadRequest(new{message="Create the service ladder first."});
+    var old=await db.MaintenancePlanMatrixItems.Where(x=>planIds.Contains(x.MaintenancePlanId)).ToListAsync();db.MaintenancePlanMatrixItems.RemoveRange(old);
+    foreach(var r in rows.Where(x=>planIds.Contains(x.MaintenancePlanId)).GroupBy(x=>new{x.MaintenancePlanId,x.MaintenanceTaskDefinitionId}).Select(g=>g.First()))db.MaintenancePlanMatrixItems.Add(new MaintenancePlanMatrixItem{MaintenancePlanId=r.MaintenancePlanId,MaintenanceTaskDefinitionId=r.MaintenanceTaskDefinitionId,Sequence=r.Sequence,IsMandatory=r.IsMandatory});
+    await db.SaveChangesAsync();return Results.Ok(new{saved=rows.Count});
+});
+app.MapPost("/api/pm/programs/{id:guid}/import-matrix",async(Guid id,PmProgramMatrixImportRequest r,AppDbContext db)=>
+{
+    if(!await db.MaintenancePrograms.AnyAsync(x=>x.Id==id))return Results.NotFound();
+    foreach(var level in r.Levels.OrderBy(x=>x.Sequence))
+    {
+        var code=level.PlanCode.Trim().ToUpperInvariant();var p=await db.MaintenancePlans.FirstOrDefaultAsync(x=>x.MaintenanceProgramId==id&&x.PlanCode==code);
+        if(p is null){p=new MaintenancePlan{MaintenanceProgramId=id,PlanCode=code};db.MaintenancePlans.Add(p);}p.Name=string.IsNullOrWhiteSpace(level.Name)?code:level.Name;p.Sequence=level.Sequence;p.IsActive=true;p.RecurrenceBasis="ScheduledDue";await db.SaveChangesAsync();
+        if(level.UsageInterval.HasValue){var tr=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(x=>x.MaintenancePlanId==p.Id&&x.TriggerCode==level.UsageTriggerCode);if(tr is null){tr=new MaintenancePlanTrigger{MaintenancePlanId=p.Id,TriggerCode=level.UsageTriggerCode};db.MaintenancePlanTriggers.Add(tr);}tr.IntervalValue=level.UsageInterval.Value;tr.InitialDueValue=level.UsageInterval.Value;tr.UnitCode=level.UsageUnit;tr.WarningValue=level.WarningUsage??0;tr.IsActive=true;}
+        if(level.CalendarMonths.HasValue){var tm=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(x=>x.MaintenancePlanId==p.Id&&x.TriggerCode=="TIME");if(tm is null){tm=new MaintenancePlanTrigger{MaintenancePlanId=p.Id,TriggerCode="TIME"};db.MaintenancePlanTriggers.Add(tm);}tm.IntervalValue=level.CalendarMonths.Value;tm.InitialDueValue=level.CalendarMonths.Value;tm.UnitCode="MONTH";tm.WarningValue=level.WarningDays??0;tm.IsActive=true;}
+    }
+    foreach(var t in r.Tasks){var code=t.TaskCode.Trim().ToUpperInvariant();var x=await db.MaintenanceTaskDefinitions.FirstOrDefaultAsync(z=>z.TaskCode==code);if(x is null){t.Id=Guid.NewGuid();t.TaskCode=code;db.MaintenanceTaskDefinitions.Add(t);}else{x.SectionName=t.SectionName;x.TaskName=t.TaskName;x.ActionCode=t.ActionCode;x.Specification=t.Specification;x.Severity=t.Severity;x.UnitCode=t.UnitCode;x.SuggestedIssueCode=t.SuggestedIssueCode;x.SortOrder=t.SortOrder;x.IsActive=true;}}
+    await db.SaveChangesAsync();
+    var plans=await db.MaintenancePlans.Where(x=>x.MaintenanceProgramId==id).ToListAsync();var defs=await db.MaintenanceTaskDefinitions.ToListAsync();var planIds=plans.Select(x=>x.Id).ToList();var old=await db.MaintenancePlanMatrixItems.Where(x=>planIds.Contains(x.MaintenancePlanId)).ToListAsync();db.MaintenancePlanMatrixItems.RemoveRange(old);
+    foreach(var a in r.Assignments){var p=plans.FirstOrDefault(x=>x.PlanCode==a.PlanCode);var t=defs.FirstOrDefault(x=>x.TaskCode==a.TaskCode);if(p!=null&&t!=null)db.MaintenancePlanMatrixItems.Add(new MaintenancePlanMatrixItem{MaintenancePlanId=p.Id,MaintenanceTaskDefinitionId=t.Id,Sequence=a.Sequence,IsMandatory=a.IsMandatory});}
+    await db.SaveChangesAsync();return Results.Ok(new{levels=plans.Count,tasks=r.Tasks.Count,assignments=r.Assignments.Count});
+});
+
 app.MapGet("/api/pm/programs", async (AppDbContext db) => Results.Ok(await db.MaintenancePrograms.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
 app.MapPost("/api/pm/programs", async (MaintenanceProgram r,AppDbContext db)=>
 {
@@ -891,55 +1138,6 @@ app.MapGet("/api/pm/plans", async (AppDbContext db) =>
 });
 app.MapPost("/api/pm/plans",async(MaintenancePlan r,AppDbContext db)=>{r.Id=Guid.NewGuid();r.PlanCode=r.PlanCode.Trim().ToUpperInvariant();r.RecurrenceBasis="ScheduledDue";if(!await db.MaintenancePrograms.AnyAsync(x=>x.Id==r.MaintenanceProgramId))return Results.BadRequest(new{message="Maintenance program not found."});if(await db.MaintenancePlans.AnyAsync(x=>x.MaintenanceProgramId==r.MaintenanceProgramId&&x.PlanCode==r.PlanCode))return Results.Conflict(new{message="Plan code already exists in this program."});db.MaintenancePlans.Add(r);await db.SaveChangesAsync();return Results.Ok(r);});
 app.MapPost("/api/pm/plans/{id:guid}/trigger",async(Guid id,MaintenancePlanTrigger r,AppDbContext db)=>{if(!await db.MaintenancePlans.AnyAsync(x=>x.Id==id))return Results.NotFound();var code=r.TriggerCode.Trim().ToUpperInvariant();var x=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(t=>t.MaintenancePlanId==id&&t.TriggerCode==code);if(x is null){x=new MaintenancePlanTrigger{MaintenancePlanId=id,TriggerCode=code};db.MaintenancePlanTriggers.Add(x);}x.IntervalValue=r.IntervalValue;x.InitialDueValue=r.InitialDueValue;x.UnitCode=r.UnitCode;x.WarningValue=r.WarningValue;x.ToleranceValue=r.ToleranceValue;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);});
-app.MapDelete("/api/pm/plans/{planId:guid}/trigger/{triggerId:guid}", async(Guid planId,Guid triggerId,AppDbContext db)=>
-{
-    var x=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(t=>t.Id==triggerId&&t.MaintenancePlanId==planId);
-    if(x is null)return Results.NotFound();
-    db.MaintenancePlanTriggers.Remove(x);await db.SaveChangesAsync();return Results.NoContent();
-});
-app.MapPut("/api/pm/plans/{id:guid}/configuration", async(Guid id,MaintenancePlanConfigurationRequest r,AppDbContext db)=>
-{
-    var plan=await db.MaintenancePlans.FindAsync(id);if(plan is null)return Results.NotFound(new{message="Maintenance Plan not found."});
-    var triggers=r.Triggers.Where(x=>x.IsActive).GroupBy(x=>x.TriggerCode.Trim().ToUpperInvariant()).Select(g=>g.First()).ToList();
-    if(triggers.Count==0)return Results.BadRequest(new{message="Add at least one due condition."});
-    foreach(var t in triggers)
-    {
-        t.TriggerCode=t.TriggerCode.Trim().ToUpperInvariant();
-        if(t.IntervalValue<=0)return Results.BadRequest(new{message=$"Interval must be greater than zero for {t.TriggerCode}."});
-        var validUnit=t.TriggerCode switch
-        {
-            "ODOMETER" => t.UnitCode=="KM",
-            "OPERATING_HOURS" => t.UnitCode=="HOUR",
-            "KWH" => t.UnitCode=="KWH",
-            "TIME" => t.UnitCode is "DAY" or "MONTH" or "YEAR",
-            _ => false
-        };
-        if(!validUnit)return Results.BadRequest(new{message=$"Trigger {t.TriggerCode} has an invalid unit {t.UnitCode}."});
-        t.MaintenancePlanId=id;
-        if(!t.InitialDueValue.HasValue||t.InitialDueValue<=0)t.InitialDueValue=t.IntervalValue;
-    }
-    var mappings=r.Templates.Where(x=>x.WorkTemplateId!=Guid.Empty).GroupBy(x=>x.WorkTemplateId).Select(g=>g.First()).ToList();
-    if(mappings.Count==0)return Results.BadRequest(new{message="Select at least one Work Template / checklist."});
-    var tids=mappings.Select(x=>x.WorkTemplateId).ToList();
-    var validTemplates=await db.WorkTemplates.Where(x=>tids.Contains(x.Id)&&x.IsActive).Select(x=>x.Id).ToListAsync();
-    if(validTemplates.Count!=tids.Distinct().Count())return Results.BadRequest(new{message="One or more selected Work Templates are invalid or inactive."});
-
-    var oldTriggers=await db.MaintenancePlanTriggers.Where(x=>x.MaintenancePlanId==id).ToListAsync();
-    db.MaintenancePlanTriggers.RemoveRange(oldTriggers);
-    foreach(var t in triggers)db.MaintenancePlanTriggers.Add(new MaintenancePlanTrigger{MaintenancePlanId=id,TriggerCode=t.TriggerCode,IntervalValue=t.IntervalValue,InitialDueValue=t.InitialDueValue,UnitCode=t.UnitCode,WarningValue=t.WarningValue,ToleranceValue=t.ToleranceValue,IsActive=true});
-
-    var oldMappings=await db.MaintenancePlanTemplates.Where(x=>x.MaintenancePlanId==id).ToListAsync();
-    db.MaintenancePlanTemplates.RemoveRange(oldMappings);
-    var seq=0;
-    foreach(var m in mappings.OrderBy(x=>x.Sequence))
-    {
-        seq+=10;
-        db.MaintenancePlanTemplates.Add(new MaintenancePlanTemplate{MaintenancePlanId=id,WorkTemplateId=m.WorkTemplateId,Sequence=m.Sequence>0?m.Sequence:seq,IsMandatory=m.IsMandatory});
-    }
-    await db.SaveChangesAsync();
-    return Results.Ok(new{planId=id,dueLogic="ANY",triggers=triggers.Count,templates=mappings.Count});
-});
-
 app.MapPost("/api/pm/plans/{id:guid}/task",async(Guid id,MaintenancePlanTask r,AppDbContext db)=>{if(!await db.MaintenancePlans.AnyAsync(x=>x.Id==id)||!await db.ServiceTaskMasters.AnyAsync(x=>x.Id==r.ServiceTaskMasterId))return Results.BadRequest();var x=await db.MaintenancePlanTasks.FirstOrDefaultAsync(t=>t.MaintenancePlanId==id&&t.ServiceTaskMasterId==r.ServiceTaskMasterId);if(x is null){x=new MaintenancePlanTask{MaintenancePlanId=id,ServiceTaskMasterId=r.ServiceTaskMasterId};db.MaintenancePlanTasks.Add(x);}x.Sequence=r.Sequence;x.IsMandatory=r.IsMandatory;await db.SaveChangesAsync();return Results.Ok(x);});
 app.MapDelete("/api/pm/plans/{planId:guid}/task/{mappingId:guid}",async(Guid planId,Guid mappingId,AppDbContext db)=>{var x=await db.MaintenancePlanTasks.FirstOrDefaultAsync(t=>t.Id==mappingId&&t.MaintenancePlanId==planId);if(x is null)return Results.NotFound();db.MaintenancePlanTasks.Remove(x);await db.SaveChangesAsync();return Results.NoContent();});
 app.MapGet("/api/pm/plans/{id:guid}/tasks",async(Guid id,AppDbContext db)=>
@@ -1068,34 +1266,32 @@ app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbCo
         var po=await db.PmObligations.FindAsync(a.PmObligationId.Value);
         if(po?.MaintenancePlanId is Guid planId)
         {
-            var templateMappings=await(from m in db.MaintenancePlanTemplates where m.MaintenancePlanId==planId
-                join wt in db.WorkTemplates on m.WorkTemplateId equals wt.Id where wt.IsActive orderby m.Sequence select new{m,wt}).ToListAsync();
-            if(templateMappings.Count>0)
+            var matrix=await(from m in db.MaintenancePlanMatrixItems where m.MaintenancePlanId==planId
+                join t in db.MaintenanceTaskDefinitions on m.MaintenanceTaskDefinitionId equals t.Id where t.IsActive orderby m.Sequence,t.SortOrder select new{m,t}).ToListAsync();
+            if(matrix.Count>0)
             {
-                var seq=0;
-                foreach(var x in templateMappings)
+                var plan=await db.MaintenancePlans.FindAsync(planId);var sectionSeq=0;
+                foreach(var section in matrix.GroupBy(x=>x.t.SectionName))
                 {
-                    seq++;
-                    var wi=new WorkItem{JobCardId=jc.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-{seq:D2}",
-                        WorkType=x.wt.Category,Description=x.wt.Name,Status="Not Started",Priority=a.Priority,
-                        EstimatedHours=x.wt.StandardHours,StandardRepairHours=x.wt.StandardHours,
-                        RequiresQc=x.wt.RequiresQc,RequiresHvAuthorization=x.wt.RequiresHvAuthorization,UpdatedAt=DateTime.UtcNow};
-                    db.WorkItems.Add(wi);
-                    var inst=new WorkTemplateInstance{JobCardId=jc.Id,WorkItemId=wi.Id,WorkTemplateId=x.wt.Id,
-                        TemplateCode=x.wt.TemplateCode,TemplateName=x.wt.Name,TemplateVersion=x.wt.Version};
-                    db.WorkTemplateInstances.Add(inst);
-                    var fields=await db.WorkTemplateFields.AsNoTracking().Where(f=>f.WorkTemplateId==x.wt.Id).OrderBy(f=>f.Sequence).ToListAsync();
-                    foreach(var f in fields)
-                        db.WorkTemplateFieldInstances.Add(new WorkTemplateFieldInstance{WorkTemplateInstanceId=inst.Id,
-                            SourceTemplateFieldId=f.Id,SectionName=f.SectionName,Sequence=f.Sequence,FieldCode=f.FieldCode,
-                            Label=f.Label,FieldType=f.FieldType,UnitCode=f.UnitCode,IsMandatory=f.IsMandatory,
-                            MinValue=f.MinValue,MaxValue=f.MaxValue,Options=f.Options,FailureAction=f.FailureAction,SuggestedIssueCode=f.SuggestedIssueCode});
+                    sectionSeq++;var wi=new WorkItem{JobCardId=jc.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-{sectionSeq:D2}",WorkType="PM Section",Description=section.Key,Status="Not Started",Priority=a.Priority,RequiresQc=true,UpdatedAt=DateTime.UtcNow};db.WorkItems.Add(wi);
+                    var inst=new WorkTemplateInstance{JobCardId=jc.Id,WorkItemId=wi.Id,WorkTemplateId=Guid.Empty,TemplateCode=$"MATRIX-{plan?.PlanCode}-{sectionSeq:D2}",TemplateName=section.Key,TemplateVersion=1};db.WorkTemplateInstances.Add(inst);
+                    foreach(var x in section)
+                    {
+                        decimal? min=null,max=null;var match=Regex.Match(x.t.Specification??"",@"(-?\d+(?:\.\d+)?)\s*[–-]\s*(-?\d+(?:\.\d+)?)");if(match.Success){if(decimal.TryParse(match.Groups[1].Value,out var mn))min=mn;if(decimal.TryParse(match.Groups[2].Value,out var mx))max=mx;}
+                        var fieldType=x.t.ActionCode switch{"M"=>"Number","F"=>"Pass/Fail","D"=>"Text","L"=>"OK/Not OK","R"=>"OK/Not OK","T"=>"OK/Not OK",_=>"OK/Not OK"};
+                        var fail=string.IsNullOrWhiteSpace(x.t.Severity)?"None":x.t.Severity.Equals("Critical",StringComparison.OrdinalIgnoreCase)?"Block Completion":"Create Defect";
+                        db.WorkTemplateFieldInstances.Add(new WorkTemplateFieldInstance{WorkTemplateInstanceId=inst.Id,SectionName=x.t.SectionName,Sequence=x.m.Sequence>0?x.m.Sequence:x.t.SortOrder,FieldCode=x.t.TaskCode,Label=x.t.TaskName,FieldType=fieldType,UnitCode=x.t.UnitCode,IsMandatory=x.m.IsMandatory,MinValue=min,MaxValue=max,Options=fieldType=="OK/Not OK"?"OK;Not OK":fieldType=="Pass/Fail"?"Pass;Fail":"",FailureAction=fail,SuggestedIssueCode=x.t.SuggestedIssueCode,ActionCode=x.t.ActionCode,Specification=x.t.Specification,Severity=x.t.Severity});
+                    }
                 }
             }
             else
             {
-                var mapped=await(from m in db.MaintenancePlanTasks where m.MaintenancePlanId==planId join sm in db.ServiceTaskMasters on m.ServiceTaskMasterId equals sm.Id orderby m.Sequence select new{m,sm}).ToListAsync();
-                var seq=0;foreach(var x in mapped){seq++;db.WorkItems.Add(new WorkItem{JobCardId=jc.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-{seq:D2}",WorkType="PM",Description=x.sm.Name,Status="Not Started",Priority=a.Priority,EstimatedHours=x.sm.StandardHours,StandardRepairHours=x.sm.StandardHours,RequiresQc=x.sm.RequiresQc,RequiresHvAuthorization=x.sm.RequiresHvAuthorization,UpdatedAt=DateTime.UtcNow});}
+                var templateMappings=await(from m in db.MaintenancePlanTemplates where m.MaintenancePlanId==planId join wt in db.WorkTemplates on m.WorkTemplateId equals wt.Id where wt.IsActive orderby m.Sequence select new{m,wt}).ToListAsync();
+                if(templateMappings.Count>0)
+                {
+                    var seq=0;foreach(var x in templateMappings){seq++;var wi=new WorkItem{JobCardId=jc.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-{seq:D2}",WorkType=x.wt.Category,Description=x.wt.Name,Status="Not Started",Priority=a.Priority,EstimatedHours=x.wt.StandardHours,StandardRepairHours=x.wt.StandardHours,RequiresQc=x.wt.RequiresQc,RequiresHvAuthorization=x.wt.RequiresHvAuthorization,UpdatedAt=DateTime.UtcNow};db.WorkItems.Add(wi);var inst=new WorkTemplateInstance{JobCardId=jc.Id,WorkItemId=wi.Id,WorkTemplateId=x.wt.Id,TemplateCode=x.wt.TemplateCode,TemplateName=x.wt.Name,TemplateVersion=x.wt.Version};db.WorkTemplateInstances.Add(inst);var fields=await db.WorkTemplateFields.AsNoTracking().Where(f=>f.WorkTemplateId==x.wt.Id).OrderBy(f=>f.Sequence).ToListAsync();foreach(var f in fields)db.WorkTemplateFieldInstances.Add(new WorkTemplateFieldInstance{WorkTemplateInstanceId=inst.Id,SourceTemplateFieldId=f.Id,SectionName=f.SectionName,Sequence=f.Sequence,FieldCode=f.FieldCode,Label=f.Label,FieldType=f.FieldType,UnitCode=f.UnitCode,IsMandatory=f.IsMandatory,MinValue=f.MinValue,MaxValue=f.MaxValue,Options=f.Options,FailureAction=f.FailureAction,SuggestedIssueCode=f.SuggestedIssueCode});}
+                }
+                else{var mapped=await(from m in db.MaintenancePlanTasks where m.MaintenancePlanId==planId join sm in db.ServiceTaskMasters on m.ServiceTaskMasterId equals sm.Id orderby m.Sequence select new{m,sm}).ToListAsync();var seq=0;foreach(var x in mapped){seq++;db.WorkItems.Add(new WorkItem{JobCardId=jc.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-{seq:D2}",WorkType="PM",Description=x.sm.Name,Status="Not Started",Priority=a.Priority,EstimatedHours=x.sm.StandardHours,StandardRepairHours=x.sm.StandardHours,RequiresQc=x.sm.RequiresQc,RequiresHvAuthorization=x.sm.RequiresHvAuthorization,UpdatedAt=DateTime.UtcNow});}}
             }
         }
     }
@@ -1206,9 +1402,19 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}", async (Guid jobCardId, App
     if(data is null)return Results.NotFound();
     var tasks=await db.WorkItems.CountAsync(x=>x.JobCardId==jobCardId);var completed=await db.WorkItems.CountAsync(x=>x.JobCardId==jobCardId&&x.Status=="Completed");
     var defects=await db.Defects.CountAsync(x=>x.JobCardId==jobCardId&&x.Disposition!="Closed");
-    var parts=await db.PartRequests.CountAsync(x=>x.JobCardId==jobCardId);var qc=await db.QcInspections.Where(x=>x.JobCardId==jobCardId).OrderByDescending(x=>x.InspectedAt).Select(x=>x.Result).FirstOrDefaultAsync();
-    return Results.Ok(new{data,tasks,completedTasks=completed,openDefects=defects,partTransactions=parts,qcStatus=qc??"Pending"});
+    var instanceIds=await db.WorkTemplateInstances.Where(x=>x.JobCardId==jobCardId).Select(x=>x.Id).ToListAsync();var checks=await db.WorkTemplateFieldInstances.CountAsync(x=>instanceIds.Contains(x.WorkTemplateInstanceId));var checksDone=await db.WorkTemplateFieldInstances.CountAsync(x=>instanceIds.Contains(x.WorkTemplateInstanceId)&&x.Result!="Pending"&&x.Value!="");
+    var parts=await db.PartRequests.CountAsync(x=>x.JobCardId==jobCardId);var partsWaiting=await db.PartRequests.CountAsync(x=>x.JobCardId==jobCardId&&(x.Status=="Requested"||x.Status=="Awaiting Stock"));var qc=await db.QcInspections.Where(x=>x.JobCardId==jobCardId).OrderByDescending(x=>x.InspectedAt).Select(x=>x.Result).FirstOrDefaultAsync();
+    return Results.Ok(new{data,tasks,completedTasks=completed,checksTotal=checks,checksCompleted=checksDone,openDefects=defects,partTransactions=parts,partsWaiting,qcStatus=qc??"Pending"});
 });
+app.MapGet("/api/service-workspace/{jobCardId:guid}/execution",async(Guid jobCardId,AppDbContext db)=>
+{
+    var items=await db.WorkItems.AsNoTracking().Where(x=>x.JobCardId==jobCardId).OrderBy(x=>x.TaskCode).ToListAsync();var ids=items.Select(x=>x.Id).ToList();
+    var inst=await db.WorkTemplateInstances.AsNoTracking().Where(x=>x.JobCardId==jobCardId).ToListAsync();var instIds=inst.Select(x=>x.Id).ToList();
+    var fields=await db.WorkTemplateFieldInstances.AsNoTracking().Where(x=>instIds.Contains(x.WorkTemplateInstanceId)).OrderBy(x=>x.Sequence).ToListAsync();var fieldIds=fields.Select(x=>x.Id).ToList();var issueIds=await db.Defects.AsNoTracking().Where(x=>x.ChecklistFieldInstanceId.HasValue&&fieldIds.Contains(x.ChecklistFieldInstanceId.Value)&&x.Disposition!="Closed").Select(x=>x.ChecklistFieldInstanceId!.Value).ToListAsync();
+    var sections=inst.Select(i=>{var wi=items.FirstOrDefault(x=>x.Id==i.WorkItemId);var fs=fields.Where(f=>f.WorkTemplateInstanceId==i.Id).Select(f=>new{f.Id,f.Sequence,f.FieldCode,f.Label,f.FieldType,f.ActionCode,f.Specification,f.Severity,f.UnitCode,f.IsMandatory,f.MinValue,f.MaxValue,f.Options,f.FailureAction,f.SuggestedIssueCode,f.Value,f.Result,f.Remarks,f.EvidenceReference,f.ExecutedAt,f.ExecutedBy,issueRecorded=issueIds.Contains(f.Id)});return new{workItemId=i.WorkItemId,taskCode=wi?.TaskCode??"",name=i.TemplateName,status=wi?.Status??i.Status,completed=fs.Count(x=>x.Result!="Pending"&&x.Value!=""),total=fs.Count(),fields=fs};});
+    var corrective=items.Where(x=>x.WorkType=="Corrective Repair").Select(x=>new{x.Id,x.TaskCode,x.Description,x.Status,x.Priority,x.DependencyTaskId});return Results.Ok(new{sections,corrective});
+});
+app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck-pass",async(Guid workItemId,Guid fieldId,AppDbContext db)=>{var d=await db.Defects.FirstOrDefaultAsync(x=>x.ChecklistFieldInstanceId==fieldId&&x.Disposition!="Closed");if(d is null)return Results.NotFound(new{message="No open issue found."});if(d.CorrectiveWorkItemId.HasValue){var c=await db.WorkItems.FindAsync(d.CorrectiveWorkItemId.Value);if(c!=null&&c.Status!="Completed")return Results.Conflict(new{message="Complete the corrective work before recheck."});}d.Disposition="Closed";d.ClosedAt=DateTime.UtcNow;var f=await db.WorkTemplateFieldInstances.FindAsync(fieldId);if(f!=null){f.Result="Pass";f.Value=f.FieldType=="OK/Not OK"?"OK":"Pass";f.ExecutedAt=DateTime.UtcNow;}await db.SaveChangesAsync();return Results.Ok();});
 
 app.MapGet("/api/parts/master", async (AppDbContext db) => Results.Ok(await db.PartMasters.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.PartNumber).ToListAsync()));
 app.MapPost("/api/parts/master", async (PartMasterRequest r, AppDbContext db) =>
