@@ -703,6 +703,12 @@ public class MaintenancePlanTrigger
     public bool IsActive { get; set; } = true;
 }
 
+public class MaintenancePlanConfigurationRequest
+{
+    public List<MaintenancePlanTrigger> Triggers { get; set; } = new();
+    public List<MaintenancePlanTemplate> Templates { get; set; } = new();
+}
+
 public class MaintenancePlanTask
 {
     public Guid Id { get; set; } = Guid.NewGuid();
