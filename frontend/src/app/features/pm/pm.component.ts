@@ -14,7 +14,7 @@ import {Component,OnInit} from '@angular/core';import{CommonModule}from'@angular
 
 <div *ngIf="tab==='templates'" class="card">
 <div class="section-title"><div><h3>Work Template Builder</h3><p class="hint">One Work Template becomes one executable technician task. Existing paper/Excel checklists become paper-on-glass forms.</p></div>
-<div><input #excelImport type="file" accept=".xlsx,.xls" hidden (change)="importExcel($event)"><button class="btn btn-outline" (click)="excelImport.click()">Import Excel</button> <button class="btn btn-primary" (click)="openWorkTemplate()">+ Template</button></div></div>
+<div><button class="btn btn-outline" (click)="downloadTemplate()">Download Excel Template</button> <button class="btn btn-primary" (click)="openWorkTemplate()">+ New Work Template</button></div></div>
 <div class="excel-help">Excel columns supported: <b>Section, Seq, Field Code, Field / Check, Type, UOM, Mandatory, Min, Max, Options, Fail Action</b></div>
 <table><tr><th>Template</th><th>Name</th><th>Category</th><th>Revision</th><th>Form Fields</th><th>Std Hours</th><th>Skill</th><th>QC</th><th>Status</th><th></th></tr>
 <tr *ngFor="let x of workTemplates"><td>{{x.templateCode}}</td><td><b>{{x.name}}</b><small>{{x.description}}</small></td><td>{{x.category}}</td><td>Rev {{x.version}}</td><td>{{x.fieldCount}}</td><td>{{x.standardHours}}</td><td>{{x.requiredSkillCode||'-'}}</td><td>{{x.requiresQc?'Yes':'No'}}</td><td>{{x.isActive?'Active':'Inactive'}}</td><td><button class="btn btn-outline" (click)="configureTemplate(x)">Configure</button></td></tr>
