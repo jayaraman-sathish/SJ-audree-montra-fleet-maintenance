@@ -92,7 +92,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         m.Entity<MaintenancePlan>().HasIndex(x => new { x.MaintenanceProgramId, x.PlanCode }).IsUnique();
         m.Entity<MaintenancePlanTrigger>().HasIndex(x => new { x.MaintenancePlanId, x.TriggerCode }).IsUnique();
         m.Entity<MaintenancePlanTask>().HasIndex(x => new { x.MaintenancePlanId, x.ServiceTaskMasterId }).IsUnique();
-        m.Entity<MaintenanceTaskDefinition>().HasIndex(x => x.TaskCode).IsUnique();
+        m.Entity<MaintenanceTaskDefinition>().HasIndex(x => x.TaskCode);
+        m.Entity<MaintenanceTaskDefinition>().HasIndex(x => new { x.MaintenanceProgramId, x.TaskCode, x.TaskName }).IsUnique();
         m.Entity<MaintenancePlanMatrixItem>().HasIndex(x => new { x.MaintenancePlanId, x.MaintenanceTaskDefinitionId }).IsUnique();
         m.Entity<Vehicle>().Property(x => x.PurchaseCost).HasPrecision(18, 2);
         m.Entity<Vehicle>().Property(x => x.EnergyKwh).HasPrecision(18, 2);

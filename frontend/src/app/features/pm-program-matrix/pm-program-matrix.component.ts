@@ -83,8 +83,12 @@ export class PmProgramMatrixComponent implements OnInit {
   get variantScopeLabel(): string {
     const p = this.selectedProgram;
     if (!p?.vehicleModelMasterId) return 'Model must be assigned';
-    if (!p.vehicleVariantMasterId) return 'All variants of this model';
-    return this.variants.find(v => v.id === p.vehicleVariantMasterId)?.name || 'Variant reference unavailable';
+    if (!p.vehicleVariantMasterId) {
+      const rows=this.variants.filter(v=>v.vehicleModelMasterId===p.vehicleModelMasterId&&v.isActive);
+      return rows.length ? `All configured variants: ${rows.map(v=>v.variantCode).join(', ')}` : 'All variants of this model';
+    }
+    const v=this.variants.find(v => v.id === p.vehicleVariantMasterId);
+    return v ? `${v.variantCode} · ${v.name}` : 'Variant reference unavailable';
   }
   get formVariants(): VariantReference[] { return variantOptions(this.program.vehicleModelMasterId, this.variants, this.program.vehicleVariantMasterId); }
   get formModels(): ModelReference[] { return this.models.filter(m => m.isActive || m.id === this.program.vehicleModelMasterId); }
@@ -222,34 +226,38 @@ export class PmProgramMatrixComponent implements OnInit {
       && (!this.section || t.sectionName === this.section) && (!this.action || t.actionCode === this.action)
       && (!this.severity || t.severity === this.severity));
   }
-  isMapped(planId: string | undefined, taskId: string): boolean {
-    return this.assignments.some(a => a.maintenancePlanId === planId && a.maintenanceTaskDefinitionId === taskId);
+  matrixAction(planId: string | undefined, taskId: string): string {
+    if (!planId) return '';
+    return this.assignments.find(a => a.maintenancePlanId === planId && a.maintenanceTaskDefinitionId === taskId)?.actionCode || '';
   }
-  toggle(planId: string | undefined, taskId: string, on: boolean): void {
+  setMatrixAction(planId: string | undefined, task: any, actionCode: string): void {
     if (!planId || !this.matrixReady || this.saving) return;
-    const i = this.assignments.findIndex(a => a.maintenancePlanId === planId && a.maintenanceTaskDefinitionId === taskId);
-    if (on && i < 0) this.assignments.push({ maintenancePlanId: planId, maintenanceTaskDefinitionId: taskId,
-      sequence: (this.assignments.filter(a => a.maintenancePlanId === planId).length + 1) * 10, isMandatory: true });
-    if (!on && i >= 0) this.assignments.splice(i, 1);
-    this.matrixDirty = true;
+    const action=(actionCode||'').trim().toUpperCase();
+    const i=this.assignments.findIndex(a=>a.maintenancePlanId===planId&&a.maintenanceTaskDefinitionId===task.id);
+    if (!action) { if(i>=0)this.assignments.splice(i,1); }
+    else if (['I','M','F','D','T','L','R'].includes(action)) {
+      const row={maintenancePlanId:planId,maintenanceTaskDefinitionId:task.id,actionCode:action,sequence:task.sortOrder||((i+1)*10),isMandatory:true};
+      if(i>=0)this.assignments[i]={...this.assignments[i],...row}; else this.assignments.push(row);
+    }
+    this.matrixDirty=true;
   }
   assignVisible(on: boolean): void {
     if (!this.bulkLevel || !this.matrixReady) return;
-    for (const task of this.filteredTasks()) this.toggle(this.bulkLevel, task.id, on);
+    for (const task of this.filteredTasks()) this.setMatrixAction(this.bulkLevel, task, on ? task.actionCode : '');
   }
   copyLevel(): void {
     if (!this.copyFrom || !this.copyTo || this.copyFrom === this.copyTo || !this.matrixReady) return;
-    const source = this.assignments.filter(a => a.maintenancePlanId === this.copyFrom);
-    for (const row of source) this.toggle(this.copyTo, row.maintenanceTaskDefinitionId, true);
+    const source=this.assignments.filter(a=>a.maintenancePlanId===this.copyFrom);
+    for(const row of source){const task=this.tasks.find(t=>t.id===row.maintenanceTaskDefinitionId);if(task)this.setMatrixAction(this.copyTo,task,row.actionCode||task.actionCode);}
   }
   assignmentCount(): number { return this.assignments.length; }
-  checksForLevel(id: string | undefined): number { return this.assignments.filter(a => a.maintenancePlanId === id).length; }
+  checksForLevel(id: string | undefined): number { return this.assignments.filter(a => a.maintenancePlanId === id && !!a.actionCode).length; }
   saveMatrix(): void {
     if (!this.matrixReady || this.programBusy) return;
     this.saving = true;
     this.h.put(`/api/pm/programs/${this.programId}/task-matrix`, this.assignments).subscribe({
-      next: () => { this.saving = false; this.notify('Task matrix saved.', 'success'); this.loadMatrix(); },
-      error: e => { this.saving = false; this.notify(this.errorMessage(e, 'Unable to save the task matrix.'), 'error'); }
+      next: () => { this.saving = false; this.notify('Service task matrix saved. Blank cells are excluded from technician execution.', 'success'); this.loadMatrix(); },
+      error: e => { this.saving = false; this.notify(this.errorMessage(e, 'Unable to save the service task matrix.'), 'error'); }
     });
   }
   actionName(code: string): string {
@@ -267,7 +275,7 @@ export class PmProgramMatrixComponent implements OnInit {
     if (!this.matrixReady) return;
     const rows = this.tasks.map(t => {
       const row: any = { Section: t.sectionName, Code: t.taskCode, Task: t.taskName, Action: t.actionCode, 'Spec / Limit': t.specification, Severity: t.severity };
-      for (const level of this.levels) row[level.planCode] = this.isMapped(level.id, t.id) ? t.actionCode : '';
+      for (const level of this.levels) row[level.planCode] = this.matrixAction(level.id, t.id);
       return row;
     });
     const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new();
@@ -322,15 +330,19 @@ export class PmProgramMatrixComponent implements OnInit {
       for (let r = headerIndex + 1; r < rows.length; r++) {
         const row = rows[r]; if (!row[1] || !row[2]) continue;
         const code = String(row[1]).trim().toUpperCase();
-        if (codes.has(code)) throw new Error(`Duplicate task code ${code} at spreadsheet row ${r + 1}.`);
+        const sectionName=String(row[0]||'').trim();
+        if(code==='RPL'||sectionName.startsWith('Replacement —')) continue;
+        if (codes.has(code)) throw new Error(`Duplicate maintenance task code ${code} at spreadsheet row ${r + 1}. Replacement rows belong in Replacement / Lubrication.`);
         codes.add(code);
         const action = String(row[3] || 'I').trim().toUpperCase();
         if (!['I', 'M', 'F', 'D', 'T', 'L', 'R'].includes(action)) throw new Error(`Unrecognized action at row ${r + 1}: ${action}.`);
-        tasks.push({ sectionName: String(row[0] || ''), taskCode: code, taskName: String(row[2]).trim(), actionCode: action,
+        tasks.push({ sectionName, taskCode: code, taskName: String(row[2]).trim(), actionCode: action,
           specification: String(row[4] || ''), severity: String(row[5] || ''), unitCode: '', suggestedIssueCode: '', sortOrder: (r - headerIndex) * 10, isActive: true });
         for (const l of levels) {
-          const value = String(row[l.column] || '').trim();
-          if (value && !['-', 'N', 'NO', '0', 'FALSE'].includes(value.toUpperCase())) assignments.push({ planCode: l.planCode.toUpperCase(), taskCode: code, sequence: (r - headerIndex) * 10, isMandatory: true });
+          const value = String(row[l.column] || '').trim().toUpperCase();
+          if (!value || ['-', 'N', 'NO', '0', 'FALSE'].includes(value)) continue;
+          if (!['I','M','F','D','T','L','R'].includes(value)) throw new Error(`Invalid service action ${value} at row ${r+1}, ${l.planCode}. Use I, M, F, D, T, L, R or leave blank.`);
+          assignments.push({ planCode: l.planCode.toUpperCase(), taskCode: code, actionCode:value, sequence: (r - headerIndex) * 10, isMandatory: true });
         }
       }
       if (!tasks.length) throw new Error('This matrix contains no maintenance tasks.');

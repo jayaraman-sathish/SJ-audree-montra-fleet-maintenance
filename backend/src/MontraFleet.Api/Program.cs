@@ -318,6 +318,11 @@ using (var scope = app.Services.CreateScope())
           "Id" uuid PRIMARY KEY, "MaintenancePlanId" uuid NOT NULL, "MaintenanceTaskDefinitionId" uuid NOT NULL,
           "Sequence" integer NOT NULL DEFAULT 0, "IsMandatory" boolean NOT NULL DEFAULT true);
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenancePlanMatrixItems_Plan_Task" ON "MaintenancePlanMatrixItems" ("MaintenancePlanId","MaintenanceTaskDefinitionId");
+        ALTER TABLE "MaintenanceTaskDefinitions" ADD COLUMN IF NOT EXISTS "MaintenanceProgramId" uuid NULL;
+        DROP INDEX IF EXISTS "IX_MaintenanceTaskDefinitions_TaskCode";
+        CREATE INDEX IF NOT EXISTS "IX_MaintenanceTaskDefinitions_TaskCode" ON "MaintenanceTaskDefinitions" ("TaskCode");
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenanceTaskDefinitions_Program_Code_Name" ON "MaintenanceTaskDefinitions" ("MaintenanceProgramId","TaskCode","TaskName");
+        ALTER TABLE "MaintenancePlanMatrixItems" ADD COLUMN IF NOT EXISTS "ActionCode" text NOT NULL DEFAULT '';
 
         CREATE TABLE IF NOT EXISTS "MaintenanceReplacementRules" (
           "Id" uuid PRIMARY KEY, "Platform" text NOT NULL DEFAULT '', "SystemName" text NOT NULL DEFAULT '',
@@ -559,6 +564,8 @@ using (var scope = app.Services.CreateScope())
     await EnsureVariant(rhino,"RHINO_5538_6X4","Rhino 5538 EV 6x4",null,"6x4");
     await EnsureVariant(tipper,"TIPPER_2868_6X4","Tipper 2868 EV 6x4",null,"6x4 Tipper");
 
+    await PmMasterSeedV177.SeedAsync(db);
+
 
     async Task<ServiceCentreMaster> EnsureCentre(string code,string name,string address,string city,string state,string postal,string mobile,string email)
     {
@@ -645,11 +652,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.6" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.7" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.6" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.7" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -657,7 +664,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.6" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.7" });
 });
 
 static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
@@ -1178,7 +1185,8 @@ app.MapGet("/api/pm/programs/{id:guid}/service-matrix", async(Guid id,AppDbConte
     var planIds=plans.Select(x=>x.Id).ToList();
     var triggers=await db.MaintenancePlanTriggers.AsNoTracking().Where(x=>planIds.Contains(x.MaintenancePlanId)&&x.IsActive).ToListAsync();
     var levels=plans.Select(p=>new{p.Id,p.PlanCode,p.Name,p.Sequence,p.IsActive,triggers=triggers.Where(t=>t.MaintenancePlanId==p.Id).Select(t=>new{t.Id,t.TriggerCode,t.IntervalValue,t.UnitCode,t.WarningValue,t.ToleranceValue})});
-    var taskRows=await db.MaintenanceTaskDefinitions.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.SectionName).ThenBy(x=>x.SortOrder).ThenBy(x=>x.TaskCode).ToListAsync();
+    var taskRows=await db.MaintenanceTaskDefinitions.AsNoTracking().Where(x=>x.IsActive && x.MaintenanceProgramId==id).OrderBy(x=>x.SectionName).ThenBy(x=>x.SortOrder).ThenBy(x=>x.TaskCode).ToListAsync();
+    if(taskRows.Count==0) taskRows=await db.MaintenanceTaskDefinitions.AsNoTracking().Where(x=>x.IsActive && x.MaintenanceProgramId==null).OrderBy(x=>x.SectionName).ThenBy(x=>x.SortOrder).ThenBy(x=>x.TaskCode).ToListAsync();
     var assignments=await db.MaintenancePlanMatrixItems.AsNoTracking().Where(x=>planIds.Contains(x.MaintenancePlanId)).ToListAsync();
     return Results.Ok(new{program,levels,tasks=taskRows,assignments});
 });
@@ -1199,7 +1207,7 @@ app.MapPut("/api/pm/programs/{id:guid}/task-matrix", async(Guid id,List<Maintena
 {
     var planIds=await db.MaintenancePlans.Where(x=>x.MaintenanceProgramId==id).Select(x=>x.Id).ToListAsync();if(planIds.Count==0)return Results.BadRequest(new{message="Create the service ladder first."});
     var old=await db.MaintenancePlanMatrixItems.Where(x=>planIds.Contains(x.MaintenancePlanId)).ToListAsync();db.MaintenancePlanMatrixItems.RemoveRange(old);
-    foreach(var r in rows.Where(x=>planIds.Contains(x.MaintenancePlanId)).GroupBy(x=>new{x.MaintenancePlanId,x.MaintenanceTaskDefinitionId}).Select(g=>g.First()))db.MaintenancePlanMatrixItems.Add(new MaintenancePlanMatrixItem{MaintenancePlanId=r.MaintenancePlanId,MaintenanceTaskDefinitionId=r.MaintenanceTaskDefinitionId,Sequence=r.Sequence,IsMandatory=r.IsMandatory});
+    foreach(var r in rows.Where(x=>planIds.Contains(x.MaintenancePlanId)&&!string.IsNullOrWhiteSpace(x.ActionCode)).GroupBy(x=>new{x.MaintenancePlanId,x.MaintenanceTaskDefinitionId}).Select(g=>g.First()))db.MaintenancePlanMatrixItems.Add(new MaintenancePlanMatrixItem{MaintenancePlanId=r.MaintenancePlanId,MaintenanceTaskDefinitionId=r.MaintenanceTaskDefinitionId,ActionCode=r.ActionCode.Trim().ToUpperInvariant(),Sequence=r.Sequence,IsMandatory=r.IsMandatory});
     await db.SaveChangesAsync();return Results.Ok(new{saved=rows.Count});
 });
 app.MapPost("/api/pm/programs/{id:guid}/import-matrix",async(Guid id,PmProgramMatrixImportRequest r,AppDbContext db)=>
@@ -1209,15 +1217,15 @@ app.MapPost("/api/pm/programs/{id:guid}/import-matrix",async(Guid id,PmProgramMa
     if (problem is not null) return Results.BadRequest(new { message = problem });
     if (r.Tasks is null || r.Assignments is null || r.Tasks.Any(x => x is null || string.IsNullOrWhiteSpace(x.TaskCode) || string.IsNullOrWhiteSpace(x.TaskName)))
         return Results.BadRequest(new { message = "The import contains missing task definitions." });
-    if (r.Tasks.GroupBy(x => x.TaskCode.Trim().ToUpperInvariant()).Any(g => g.Count() > 1))
-        return Results.BadRequest(new { message = "The selected worksheet contains duplicate task codes." });
+    if (r.Tasks.GroupBy(x => new { Code=x.TaskCode.Trim().ToUpperInvariant(), Name=x.TaskName.Trim() }).Any(g => g.Count() > 1))
+        return Results.BadRequest(new { message = "The selected worksheet contains duplicate task rows." });
     await using var transaction = await db.Database.BeginTransactionAsync();
     var ladderError = await SavePmServiceLevelsAsync(db, id, r.Levels);
     if (ladderError is not null) return Results.Conflict(new { message = ladderError });
-    foreach(var t in r.Tasks){var code=t.TaskCode.Trim().ToUpperInvariant();var x=await db.MaintenanceTaskDefinitions.FirstOrDefaultAsync(z=>z.TaskCode==code);if(x is null){t.Id=Guid.NewGuid();t.TaskCode=code;db.MaintenanceTaskDefinitions.Add(t);}else{x.SectionName=t.SectionName;x.TaskName=t.TaskName;x.ActionCode=t.ActionCode;x.Specification=t.Specification;x.Severity=t.Severity;x.UnitCode=t.UnitCode;x.SuggestedIssueCode=t.SuggestedIssueCode;x.SortOrder=t.SortOrder;x.IsActive=true;}}
+    foreach(var t in r.Tasks){var code=t.TaskCode.Trim().ToUpperInvariant();var name=t.TaskName.Trim();var x=await db.MaintenanceTaskDefinitions.FirstOrDefaultAsync(z=>z.MaintenanceProgramId==id&&z.TaskCode==code&&z.TaskName==name);if(x is null){t.Id=Guid.NewGuid();t.MaintenanceProgramId=id;t.TaskCode=code;t.TaskName=name;db.MaintenanceTaskDefinitions.Add(t);}else{x.SectionName=t.SectionName;x.ActionCode=t.ActionCode;x.Specification=t.Specification;x.Severity=t.Severity;x.UnitCode=t.UnitCode;x.SuggestedIssueCode=t.SuggestedIssueCode;x.SortOrder=t.SortOrder;x.IsActive=true;}}
     await db.SaveChangesAsync();
-    var plans=await db.MaintenancePlans.Where(x=>x.MaintenanceProgramId==id).ToListAsync();var defs=await db.MaintenanceTaskDefinitions.ToListAsync();var planIds=plans.Select(x=>x.Id).ToList();var old=await db.MaintenancePlanMatrixItems.Where(x=>planIds.Contains(x.MaintenancePlanId)).ToListAsync();db.MaintenancePlanMatrixItems.RemoveRange(old);
-    foreach(var a in r.Assignments){var p=plans.FirstOrDefault(x=>x.PlanCode==a.PlanCode);var t=defs.FirstOrDefault(x=>x.TaskCode==a.TaskCode);if(p!=null&&t!=null)db.MaintenancePlanMatrixItems.Add(new MaintenancePlanMatrixItem{MaintenancePlanId=p.Id,MaintenanceTaskDefinitionId=t.Id,Sequence=a.Sequence,IsMandatory=a.IsMandatory});}
+    var plans=await db.MaintenancePlans.Where(x=>x.MaintenanceProgramId==id).ToListAsync();var defs=await db.MaintenanceTaskDefinitions.Where(x=>x.MaintenanceProgramId==id).ToListAsync();var planIds=plans.Select(x=>x.Id).ToList();var old=await db.MaintenancePlanMatrixItems.Where(x=>planIds.Contains(x.MaintenancePlanId)).ToListAsync();db.MaintenancePlanMatrixItems.RemoveRange(old);
+    foreach(var a in r.Assignments){var p=plans.FirstOrDefault(x=>x.PlanCode==a.PlanCode);var t=defs.FirstOrDefault(x=>x.TaskCode==a.TaskCode);if(p!=null&&t!=null&&!string.IsNullOrWhiteSpace(a.ActionCode))db.MaintenancePlanMatrixItems.Add(new MaintenancePlanMatrixItem{MaintenancePlanId=p.Id,MaintenanceTaskDefinitionId=t.Id,ActionCode=a.ActionCode.Trim().ToUpperInvariant(),Sequence=a.Sequence,IsMandatory=a.IsMandatory});}
     await db.SaveChangesAsync();await transaction.CommitAsync();return Results.Ok(new{levels=plans.Count,tasks=r.Tasks.Count,assignments=r.Assignments.Count});
 });
 
@@ -1428,9 +1436,10 @@ app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbCo
                     foreach(var x in section)
                     {
                         decimal? min=null,max=null;var match=Regex.Match(x.t.Specification??"",@"(-?\d+(?:\.\d+)?)\s*[–-]\s*(-?\d+(?:\.\d+)?)");if(match.Success){if(decimal.TryParse(match.Groups[1].Value,out var mn))min=mn;if(decimal.TryParse(match.Groups[2].Value,out var mx))max=mx;}
-                        var fieldType=x.t.ActionCode switch{"M"=>"Number","F"=>"Pass/Fail","D"=>"Text","L"=>"OK/Not OK","R"=>"OK/Not OK","T"=>"OK/Not OK",_=>"OK/Not OK"};
+                        var serviceAction=string.IsNullOrWhiteSpace(x.m.ActionCode)?x.t.ActionCode:x.m.ActionCode;
+                        var fieldType=serviceAction switch{"M"=>"Number","F"=>"Pass/Fail","D"=>"Text","L"=>"OK/Not OK","R"=>"OK/Not OK","T"=>"OK/Not OK",_=>"OK/Not OK"};
                         var fail=string.IsNullOrWhiteSpace(x.t.Severity)?"None":x.t.Severity.Equals("Critical",StringComparison.OrdinalIgnoreCase)?"Block Completion":"Create Defect";
-                        db.WorkTemplateFieldInstances.Add(new WorkTemplateFieldInstance{WorkTemplateInstanceId=inst.Id,SectionName=x.t.SectionName,Sequence=x.m.Sequence>0?x.m.Sequence:x.t.SortOrder,FieldCode=x.t.TaskCode,Label=x.t.TaskName,FieldType=fieldType,UnitCode=x.t.UnitCode,IsMandatory=x.m.IsMandatory,MinValue=min,MaxValue=max,Options=fieldType=="OK/Not OK"?"OK;Not OK":fieldType=="Pass/Fail"?"Pass;Fail":"",FailureAction=fail,SuggestedIssueCode=x.t.SuggestedIssueCode,ActionCode=x.t.ActionCode,Specification=x.t.Specification,Severity=x.t.Severity});
+                        db.WorkTemplateFieldInstances.Add(new WorkTemplateFieldInstance{WorkTemplateInstanceId=inst.Id,SectionName=x.t.SectionName,Sequence=x.m.Sequence>0?x.m.Sequence:x.t.SortOrder,FieldCode=x.t.TaskCode,Label=x.t.TaskName,FieldType=fieldType,UnitCode=x.t.UnitCode,IsMandatory=x.m.IsMandatory,MinValue=min,MaxValue=max,Options=fieldType=="OK/Not OK"?"OK;Not OK":fieldType=="Pass/Fail"?"Pass;Fail":"",FailureAction=fail,SuggestedIssueCode=x.t.SuggestedIssueCode,ActionCode=serviceAction,Specification=x.t.Specification,Severity=x.t.Severity});
                     }
                 }
             }
