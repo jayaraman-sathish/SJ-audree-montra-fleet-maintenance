@@ -491,11 +491,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.3" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.4" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.3" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.4" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -503,7 +503,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.3" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.4" });
 });
 
 static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
@@ -891,6 +891,55 @@ app.MapGet("/api/pm/plans", async (AppDbContext db) =>
 });
 app.MapPost("/api/pm/plans",async(MaintenancePlan r,AppDbContext db)=>{r.Id=Guid.NewGuid();r.PlanCode=r.PlanCode.Trim().ToUpperInvariant();r.RecurrenceBasis="ScheduledDue";if(!await db.MaintenancePrograms.AnyAsync(x=>x.Id==r.MaintenanceProgramId))return Results.BadRequest(new{message="Maintenance program not found."});if(await db.MaintenancePlans.AnyAsync(x=>x.MaintenanceProgramId==r.MaintenanceProgramId&&x.PlanCode==r.PlanCode))return Results.Conflict(new{message="Plan code already exists in this program."});db.MaintenancePlans.Add(r);await db.SaveChangesAsync();return Results.Ok(r);});
 app.MapPost("/api/pm/plans/{id:guid}/trigger",async(Guid id,MaintenancePlanTrigger r,AppDbContext db)=>{if(!await db.MaintenancePlans.AnyAsync(x=>x.Id==id))return Results.NotFound();var code=r.TriggerCode.Trim().ToUpperInvariant();var x=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(t=>t.MaintenancePlanId==id&&t.TriggerCode==code);if(x is null){x=new MaintenancePlanTrigger{MaintenancePlanId=id,TriggerCode=code};db.MaintenancePlanTriggers.Add(x);}x.IntervalValue=r.IntervalValue;x.InitialDueValue=r.InitialDueValue;x.UnitCode=r.UnitCode;x.WarningValue=r.WarningValue;x.ToleranceValue=r.ToleranceValue;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);});
+app.MapDelete("/api/pm/plans/{planId:guid}/trigger/{triggerId:guid}", async(Guid planId,Guid triggerId,AppDbContext db)=>
+{
+    var x=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(t=>t.Id==triggerId&&t.MaintenancePlanId==planId);
+    if(x is null)return Results.NotFound();
+    db.MaintenancePlanTriggers.Remove(x);await db.SaveChangesAsync();return Results.NoContent();
+});
+app.MapPut("/api/pm/plans/{id:guid}/configuration", async(Guid id,MaintenancePlanConfigurationRequest r,AppDbContext db)=>
+{
+    var plan=await db.MaintenancePlans.FindAsync(id);if(plan is null)return Results.NotFound(new{message="Maintenance Plan not found."});
+    var triggers=r.Triggers.Where(x=>x.IsActive).GroupBy(x=>x.TriggerCode.Trim().ToUpperInvariant()).Select(g=>g.First()).ToList();
+    if(triggers.Count==0)return Results.BadRequest(new{message="Add at least one due condition."});
+    foreach(var t in triggers)
+    {
+        t.TriggerCode=t.TriggerCode.Trim().ToUpperInvariant();
+        if(t.IntervalValue<=0)return Results.BadRequest(new{message=$"Interval must be greater than zero for {t.TriggerCode}."});
+        var validUnit=t.TriggerCode switch
+        {
+            "ODOMETER" => t.UnitCode=="KM",
+            "OPERATING_HOURS" => t.UnitCode=="HOUR",
+            "KWH" => t.UnitCode=="KWH",
+            "TIME" => t.UnitCode is "DAY" or "MONTH" or "YEAR",
+            _ => false
+        };
+        if(!validUnit)return Results.BadRequest(new{message=$"Trigger {t.TriggerCode} has an invalid unit {t.UnitCode}."});
+        t.MaintenancePlanId=id;
+        if(!t.InitialDueValue.HasValue||t.InitialDueValue<=0)t.InitialDueValue=t.IntervalValue;
+    }
+    var mappings=r.Templates.Where(x=>x.WorkTemplateId!=Guid.Empty).GroupBy(x=>x.WorkTemplateId).Select(g=>g.First()).ToList();
+    if(mappings.Count==0)return Results.BadRequest(new{message="Select at least one Work Template / checklist."});
+    var tids=mappings.Select(x=>x.WorkTemplateId).ToList();
+    var validTemplates=await db.WorkTemplates.Where(x=>tids.Contains(x.Id)&&x.IsActive).Select(x=>x.Id).ToListAsync();
+    if(validTemplates.Count!=tids.Distinct().Count())return Results.BadRequest(new{message="One or more selected Work Templates are invalid or inactive."});
+
+    var oldTriggers=await db.MaintenancePlanTriggers.Where(x=>x.MaintenancePlanId==id).ToListAsync();
+    db.MaintenancePlanTriggers.RemoveRange(oldTriggers);
+    foreach(var t in triggers)db.MaintenancePlanTriggers.Add(new MaintenancePlanTrigger{MaintenancePlanId=id,TriggerCode=t.TriggerCode,IntervalValue=t.IntervalValue,InitialDueValue=t.InitialDueValue,UnitCode=t.UnitCode,WarningValue=t.WarningValue,ToleranceValue=t.ToleranceValue,IsActive=true});
+
+    var oldMappings=await db.MaintenancePlanTemplates.Where(x=>x.MaintenancePlanId==id).ToListAsync();
+    db.MaintenancePlanTemplates.RemoveRange(oldMappings);
+    var seq=0;
+    foreach(var m in mappings.OrderBy(x=>x.Sequence))
+    {
+        seq+=10;
+        db.MaintenancePlanTemplates.Add(new MaintenancePlanTemplate{MaintenancePlanId=id,WorkTemplateId=m.WorkTemplateId,Sequence=m.Sequence>0?m.Sequence:seq,IsMandatory=m.IsMandatory});
+    }
+    await db.SaveChangesAsync();
+    return Results.Ok(new{planId=id,dueLogic="ANY",triggers=triggers.Count,templates=mappings.Count});
+});
+
 app.MapPost("/api/pm/plans/{id:guid}/task",async(Guid id,MaintenancePlanTask r,AppDbContext db)=>{if(!await db.MaintenancePlans.AnyAsync(x=>x.Id==id)||!await db.ServiceTaskMasters.AnyAsync(x=>x.Id==r.ServiceTaskMasterId))return Results.BadRequest();var x=await db.MaintenancePlanTasks.FirstOrDefaultAsync(t=>t.MaintenancePlanId==id&&t.ServiceTaskMasterId==r.ServiceTaskMasterId);if(x is null){x=new MaintenancePlanTask{MaintenancePlanId=id,ServiceTaskMasterId=r.ServiceTaskMasterId};db.MaintenancePlanTasks.Add(x);}x.Sequence=r.Sequence;x.IsMandatory=r.IsMandatory;await db.SaveChangesAsync();return Results.Ok(x);});
 app.MapDelete("/api/pm/plans/{planId:guid}/task/{mappingId:guid}",async(Guid planId,Guid mappingId,AppDbContext db)=>{var x=await db.MaintenancePlanTasks.FirstOrDefaultAsync(t=>t.Id==mappingId&&t.MaintenancePlanId==planId);if(x is null)return Results.NotFound();db.MaintenancePlanTasks.Remove(x);await db.SaveChangesAsync();return Results.NoContent();});
 app.MapGet("/api/pm/plans/{id:guid}/tasks",async(Guid id,AppDbContext db)=>
