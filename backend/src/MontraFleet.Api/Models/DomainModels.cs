@@ -718,7 +718,10 @@ public class PmServiceLevelRequest
     public decimal? UsageInterval { get; set; }
     public string UsageUnit { get; set; } = "KM";
     public decimal? WarningUsage { get; set; }
+    // CalendarMonths is retained for older callers. New screens send an explicit value and unit.
     public int? CalendarMonths { get; set; }
+    public int? CalendarInterval { get; set; }
+    public string CalendarUnit { get; set; } = "MONTH";
     public int? WarningDays { get; set; }
     public bool IsActive { get; set; } = true;
 }

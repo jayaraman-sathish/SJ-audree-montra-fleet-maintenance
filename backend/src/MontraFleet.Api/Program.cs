@@ -645,11 +645,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.5" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.6" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.5" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.6" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -657,7 +657,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.5" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.6" });
 });
 
 static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
@@ -1067,6 +1067,110 @@ app.MapPost("/api/pm/task-library/bulk", async(List<MaintenanceTaskDefinition> r
 app.MapGet("/api/pm/replacement-rules",async(AppDbContext db)=>Results.Ok(await db.MaintenanceReplacementRules.AsNoTracking().OrderBy(x=>x.Platform).ThenBy(x=>x.SystemName).ThenBy(x=>x.ItemName).ToListAsync()));
 app.MapPut("/api/pm/replacement-rules/{id:guid}",async(Guid id,MaintenanceReplacementRule r,AppDbContext db)=>{var x=await db.MaintenanceReplacementRules.FindAsync(id);if(x is null)return Results.NotFound();x.PartNumber=r.PartNumber;x.UsageInterval=r.UsageInterval;x.UsageUnit=r.UsageUnit;x.IntervalMonths=r.IntervalMonths;x.Quantity=r.Quantity;x.Notes=r.Notes;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);});
 
+
+// PM master validation is separate from vehicle due-date calculation.
+static async Task<string?> ValidatePmProgramScopeAsync(AppDbContext db, MaintenanceProgram r)
+{
+    if (!r.VehicleModelMasterId.HasValue || r.VehicleModelMasterId == Guid.Empty)
+        return "Select a Vehicle Model from the master. The program name does not assign a model.";
+    var model = await db.VehicleModelMasters.AsNoTracking().FirstOrDefaultAsync(x => x.Id == r.VehicleModelMasterId.Value);
+    if (model is null || !model.IsActive) return "Select an active vehicle model.";
+    if (r.VehicleVariantMasterId.HasValue)
+    {
+        var variant = await db.VehicleVariantMasters.AsNoTracking().FirstOrDefaultAsync(x => x.Id == r.VehicleVariantMasterId.Value);
+        if (variant is null || !variant.IsActive || variant.VehicleModelMasterId != model.Id)
+            return "The selected active variant must belong to the selected model.";
+    }
+    return null;
+}
+
+static string? ValidatePmServiceLevels(List<PmServiceLevelRequest>? rows)
+{
+    if (rows is null || rows.Count == 0) return "Add at least one service level.";
+    var codes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var r in rows)
+    {
+        if (r is null) return "A service level is missing.";
+        var code = (r.PlanCode ?? "").Trim();
+        if (code.Length == 0 || string.IsNullOrWhiteSpace(r.Name)) return "Each service level needs a code and name.";
+        if (!codes.Add(code)) return "Service level codes must be unique within this program.";
+        if (r.Sequence < 0) return "Service level order cannot be negative.";
+        if (!r.IsActive) continue;
+        var usage = (r.UsageTriggerCode ?? "NONE").Trim().ToUpperInvariant();
+        var expectedUnit = usage switch { "ODOMETER" => "KM", "OPERATING_HOURS" => "HOUR", "KWH" => "KWH", "NONE" => "", _ => null };
+        if (expectedUnit is null) return "Usage basis must be Odometer, Operating Hours, Energy Used or Calendar only.";
+        var hasUsage = r.UsageInterval.HasValue;
+        if (usage == "NONE" && hasUsage) return "Calendar-only levels cannot have a usage interval.";
+        if (hasUsage && (r.UsageInterval <= 0 || !string.Equals(r.UsageUnit, expectedUnit, StringComparison.OrdinalIgnoreCase)))
+            return "Usage interval must be positive and its unit must match the usage basis.";
+        var calendar = r.CalendarInterval ?? r.CalendarMonths;
+        var unit = (r.CalendarUnit ?? "MONTH").Trim().ToUpperInvariant();
+        if (calendar.HasValue && (calendar.Value <= 0 || !new[] { "DAY", "MONTH", "YEAR" }.Contains(unit)))
+            return "Calendar interval must be a positive whole number in days, months or years.";
+        if (!hasUsage && !calendar.HasValue) return "An active service level needs a usage or calendar interval.";
+    }
+    return null;
+}
+
+// Called only inside the service-ladder or import transaction. Preserves existing plan IDs.
+static async Task<string?> SavePmServiceLevelsAsync(AppDbContext db, Guid programId, List<PmServiceLevelRequest> rows)
+{
+    foreach (var r in rows.OrderBy(x => x.Sequence))
+    {
+        var code = r.PlanCode.Trim().ToUpperInvariant();
+        MaintenancePlan? plan;
+        if (r.Id.HasValue && r.Id.Value != Guid.Empty)
+        {
+            plan = await db.MaintenancePlans.FirstOrDefaultAsync(x => x.Id == r.Id.Value && x.MaintenanceProgramId == programId);
+            if (plan is null) return "A service level does not belong to the selected program. Refresh and retry.";
+            if (!string.Equals(plan.PlanCode, code, StringComparison.OrdinalIgnoreCase))
+                return "The code of a saved service level cannot be changed. Its existing references are retained.";
+        }
+        else
+        {
+            plan = await db.MaintenancePlans.FirstOrDefaultAsync(x => x.MaintenanceProgramId == programId && x.PlanCode == code);
+            if (plan is null)
+            {
+                plan = new MaintenancePlan { MaintenanceProgramId = programId, PlanCode = code };
+                db.MaintenancePlans.Add(plan);
+            }
+        }
+        var triggers = await db.MaintenancePlanTriggers.Where(x => x.MaintenancePlanId == plan.Id).ToListAsync();
+        if (triggers.Count(x => x.IsActive && x.TriggerCode != "TIME") > 1 || triggers.Count(x => x.IsActive && x.TriggerCode == "TIME") > 1)
+            return "This legacy level contains multiple usage or calendar conditions. Nothing was changed. Review it separately before editing.";
+        plan.Name = r.Name.Trim(); plan.Sequence = r.Sequence; plan.IsActive = r.IsActive;
+        plan.RecurrenceBasis = "ScheduledDue";
+        if (!r.IsActive) { await db.SaveChangesAsync(); continue; }
+        var usageCode = (r.UsageTriggerCode ?? "NONE").ToUpperInvariant();
+        var calendar = r.CalendarInterval ?? r.CalendarMonths;
+        var calendarUnit = (r.CalendarUnit ?? "MONTH").ToUpperInvariant();
+        foreach (var trigger in triggers)
+        {
+            if (trigger.TriggerCode == "TIME") trigger.IsActive = calendar.HasValue;
+            else trigger.IsActive = r.UsageInterval.HasValue && trigger.TriggerCode == usageCode;
+        }
+        if (r.UsageInterval.HasValue)
+        {
+            var trigger = triggers.FirstOrDefault(x => x.TriggerCode == usageCode);
+            if (trigger is null) { trigger = new MaintenancePlanTrigger { MaintenancePlanId = plan.Id, TriggerCode = usageCode }; db.MaintenancePlanTriggers.Add(trigger); }
+            var interval = r.UsageInterval.Value;
+            if (trigger.IntervalValue != interval || trigger.UnitCode != r.UsageUnit) trigger.WarningValue = 0;
+            trigger.IntervalValue = interval; trigger.InitialDueValue = interval;
+            trigger.UnitCode = r.UsageUnit.ToUpperInvariant(); trigger.IsActive = true;
+        }
+        if (calendar.HasValue)
+        {
+            var time = triggers.FirstOrDefault(x => x.TriggerCode == "TIME");
+            if (time is null) { time = new MaintenancePlanTrigger { MaintenancePlanId = plan.Id, TriggerCode = "TIME" }; db.MaintenancePlanTriggers.Add(time); }
+            if (time.IntervalValue != calendar.Value || time.UnitCode != calendarUnit) time.WarningValue = 0;
+            time.IntervalValue = calendar.Value; time.InitialDueValue = calendar.Value;
+            time.UnitCode = calendarUnit; time.IsActive = true;
+        }
+        await db.SaveChangesAsync();
+    }
+    return null;
+}
+
 app.MapGet("/api/pm/programs/{id:guid}/service-matrix", async(Guid id,AppDbContext db)=>
 {
     var program=await db.MaintenancePrograms.AsNoTracking().FirstOrDefaultAsync(x=>x.Id==id);if(program is null)return Results.NotFound();
@@ -1080,25 +1184,16 @@ app.MapGet("/api/pm/programs/{id:guid}/service-matrix", async(Guid id,AppDbConte
 });
 app.MapPut("/api/pm/programs/{id:guid}/service-ladder", async(Guid id,List<PmServiceLevelRequest> rows,AppDbContext db)=>
 {
-    if(!await db.MaintenancePrograms.AnyAsync(x=>x.Id==id))return Results.NotFound();
-    foreach(var r in rows.OrderBy(x=>x.Sequence))
-    {
-        var code=r.PlanCode.Trim().ToUpperInvariant();if(string.IsNullOrWhiteSpace(code))continue;
-        var p=await db.MaintenancePlans.FirstOrDefaultAsync(x=>x.MaintenanceProgramId==id&&x.PlanCode==code);
-        if(p is null){p=new MaintenancePlan{MaintenanceProgramId=id,PlanCode=code};db.MaintenancePlans.Add(p);}
-        p.Name=string.IsNullOrWhiteSpace(r.Name)?code:r.Name;p.Sequence=r.Sequence;p.IsActive=r.IsActive;p.RecurrenceBasis="ScheduledDue";
-        if(r.UsageInterval.HasValue&&r.UsageInterval.Value>0)
-        {
-            var trig=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(x=>x.MaintenancePlanId==p.Id&&x.TriggerCode==r.UsageTriggerCode);
-            if(trig is null){trig=new MaintenancePlanTrigger{MaintenancePlanId=p.Id,TriggerCode=r.UsageTriggerCode};db.MaintenancePlanTriggers.Add(trig);}trig.IntervalValue=r.UsageInterval.Value;trig.InitialDueValue=r.UsageInterval.Value;trig.UnitCode=r.UsageUnit;trig.WarningValue=r.WarningUsage??0;trig.ToleranceValue=0;trig.IsActive=true;
-        }
-        if(r.CalendarMonths.HasValue&&r.CalendarMonths.Value>0)
-        {
-            var time=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(x=>x.MaintenancePlanId==p.Id&&x.TriggerCode=="TIME");
-            if(time is null){time=new MaintenancePlanTrigger{MaintenancePlanId=p.Id,TriggerCode="TIME"};db.MaintenancePlanTriggers.Add(time);}time.IntervalValue=r.CalendarMonths.Value;time.InitialDueValue=r.CalendarMonths.Value;time.UnitCode="MONTH";time.WarningValue=r.WarningDays??0;time.ToleranceValue=0;time.IsActive=true;
-        }
-    }
-    await db.SaveChangesAsync();return Results.Ok();
+    if (!await db.MaintenancePrograms.AnyAsync(x => x.Id == id)) return Results.NotFound();
+    var problem = ValidatePmServiceLevels(rows);
+    if (problem is not null) return Results.BadRequest(new { message = problem });
+    await using var transaction = await db.Database.BeginTransactionAsync();
+    var error = await SavePmServiceLevelsAsync(db, id, rows);
+    if (error is not null) return Results.Conflict(new { message = error });
+    Audit(db, "UPDATE", "PMServiceLevels", id, $"Updated {rows.Count} service levels; existing plan IDs retained.");
+    await db.SaveChangesAsync();
+    await transaction.CommitAsync();
+    return Results.Ok(new { saved = rows.Count });
 });
 app.MapPut("/api/pm/programs/{id:guid}/task-matrix", async(Guid id,List<MaintenancePlanMatrixItem> rows,AppDbContext db)=>
 {
@@ -1109,27 +1204,75 @@ app.MapPut("/api/pm/programs/{id:guid}/task-matrix", async(Guid id,List<Maintena
 });
 app.MapPost("/api/pm/programs/{id:guid}/import-matrix",async(Guid id,PmProgramMatrixImportRequest r,AppDbContext db)=>
 {
-    if(!await db.MaintenancePrograms.AnyAsync(x=>x.Id==id))return Results.NotFound();
-    foreach(var level in r.Levels.OrderBy(x=>x.Sequence))
-    {
-        var code=level.PlanCode.Trim().ToUpperInvariant();var p=await db.MaintenancePlans.FirstOrDefaultAsync(x=>x.MaintenanceProgramId==id&&x.PlanCode==code);
-        if(p is null){p=new MaintenancePlan{MaintenanceProgramId=id,PlanCode=code};db.MaintenancePlans.Add(p);}p.Name=string.IsNullOrWhiteSpace(level.Name)?code:level.Name;p.Sequence=level.Sequence;p.IsActive=true;p.RecurrenceBasis="ScheduledDue";await db.SaveChangesAsync();
-        if(level.UsageInterval.HasValue){var tr=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(x=>x.MaintenancePlanId==p.Id&&x.TriggerCode==level.UsageTriggerCode);if(tr is null){tr=new MaintenancePlanTrigger{MaintenancePlanId=p.Id,TriggerCode=level.UsageTriggerCode};db.MaintenancePlanTriggers.Add(tr);}tr.IntervalValue=level.UsageInterval.Value;tr.InitialDueValue=level.UsageInterval.Value;tr.UnitCode=level.UsageUnit;tr.WarningValue=level.WarningUsage??0;tr.IsActive=true;}
-        if(level.CalendarMonths.HasValue){var tm=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(x=>x.MaintenancePlanId==p.Id&&x.TriggerCode=="TIME");if(tm is null){tm=new MaintenancePlanTrigger{MaintenancePlanId=p.Id,TriggerCode="TIME"};db.MaintenancePlanTriggers.Add(tm);}tm.IntervalValue=level.CalendarMonths.Value;tm.InitialDueValue=level.CalendarMonths.Value;tm.UnitCode="MONTH";tm.WarningValue=level.WarningDays??0;tm.IsActive=true;}
-    }
+    if (!await db.MaintenancePrograms.AnyAsync(x => x.Id == id)) return Results.NotFound();
+    var problem = ValidatePmServiceLevels(r.Levels);
+    if (problem is not null) return Results.BadRequest(new { message = problem });
+    if (r.Tasks is null || r.Assignments is null || r.Tasks.Any(x => x is null || string.IsNullOrWhiteSpace(x.TaskCode) || string.IsNullOrWhiteSpace(x.TaskName)))
+        return Results.BadRequest(new { message = "The import contains missing task definitions." });
+    if (r.Tasks.GroupBy(x => x.TaskCode.Trim().ToUpperInvariant()).Any(g => g.Count() > 1))
+        return Results.BadRequest(new { message = "The selected worksheet contains duplicate task codes." });
+    await using var transaction = await db.Database.BeginTransactionAsync();
+    var ladderError = await SavePmServiceLevelsAsync(db, id, r.Levels);
+    if (ladderError is not null) return Results.Conflict(new { message = ladderError });
     foreach(var t in r.Tasks){var code=t.TaskCode.Trim().ToUpperInvariant();var x=await db.MaintenanceTaskDefinitions.FirstOrDefaultAsync(z=>z.TaskCode==code);if(x is null){t.Id=Guid.NewGuid();t.TaskCode=code;db.MaintenanceTaskDefinitions.Add(t);}else{x.SectionName=t.SectionName;x.TaskName=t.TaskName;x.ActionCode=t.ActionCode;x.Specification=t.Specification;x.Severity=t.Severity;x.UnitCode=t.UnitCode;x.SuggestedIssueCode=t.SuggestedIssueCode;x.SortOrder=t.SortOrder;x.IsActive=true;}}
     await db.SaveChangesAsync();
     var plans=await db.MaintenancePlans.Where(x=>x.MaintenanceProgramId==id).ToListAsync();var defs=await db.MaintenanceTaskDefinitions.ToListAsync();var planIds=plans.Select(x=>x.Id).ToList();var old=await db.MaintenancePlanMatrixItems.Where(x=>planIds.Contains(x.MaintenancePlanId)).ToListAsync();db.MaintenancePlanMatrixItems.RemoveRange(old);
     foreach(var a in r.Assignments){var p=plans.FirstOrDefault(x=>x.PlanCode==a.PlanCode);var t=defs.FirstOrDefault(x=>x.TaskCode==a.TaskCode);if(p!=null&&t!=null)db.MaintenancePlanMatrixItems.Add(new MaintenancePlanMatrixItem{MaintenancePlanId=p.Id,MaintenanceTaskDefinitionId=t.Id,Sequence=a.Sequence,IsMandatory=a.IsMandatory});}
-    await db.SaveChangesAsync();return Results.Ok(new{levels=plans.Count,tasks=r.Tasks.Count,assignments=r.Assignments.Count});
+    await db.SaveChangesAsync();await transaction.CommitAsync();return Results.Ok(new{levels=plans.Count,tasks=r.Tasks.Count,assignments=r.Assignments.Count});
 });
 
 app.MapGet("/api/pm/programs", async (AppDbContext db) => Results.Ok(await db.MaintenancePrograms.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
 app.MapPost("/api/pm/programs", async (MaintenanceProgram r,AppDbContext db)=>
 {
-    r.Id=Guid.NewGuid();r.ProgramCode=r.ProgramCode.Trim().ToUpperInvariant();if(await db.MaintenancePrograms.AnyAsync(x=>x.ProgramCode==r.ProgramCode))return Results.Conflict(new{message="Program code already exists."});db.MaintenancePrograms.Add(r);await db.SaveChangesAsync();return Results.Ok(r);
+    r.ProgramCode = (r.ProgramCode ?? "").Trim().ToUpperInvariant();
+    r.Name = (r.Name ?? "").Trim(); r.Description = (r.Description ?? "").Trim();
+    if (r.ProgramCode.Length == 0 || r.ProgramCode.Length > 64 || r.Name.Length == 0 || r.Name.Length > 200)
+        return Results.BadRequest(new { message = "Enter a Program Code (up to 64 characters) and Program Name (up to 200 characters)." });
+    var scopeError = await ValidatePmProgramScopeAsync(db, r);
+    if (scopeError is not null) return Results.BadRequest(new { message = scopeError });
+    if (r.EffectiveTo.HasValue && r.EffectiveTo.Value < r.EffectiveFrom)
+        return Results.BadRequest(new { message = "Effective end must not be earlier than effective start." });
+    if (await db.MaintenancePrograms.AnyAsync(x => x.ProgramCode == r.ProgramCode))
+        return Results.Conflict(new { message = "Program code already exists. Select the existing program and use Edit Program." });
+    r.Id = Guid.NewGuid(); db.MaintenancePrograms.Add(r);
+    Audit(db, "CREATE", "MaintenanceProgram", r.Id, $"Program {r.ProgramCode}: {r.Name}; model {r.VehicleModelMasterId}; variant {r.VehicleVariantMasterId}");
+    try { await db.SaveChangesAsync(); }
+    catch (DbUpdateException ex) when (ex.InnerException is PostgresException pg && pg.SqlState == "23505")
+    { return Results.Conflict(new { message = "Program code already exists. Refresh and use Edit Program." }); }
+    return Results.Ok(r);
 });
-app.MapPut("/api/pm/programs/{id:guid}",async(Guid id,MaintenanceProgram r,AppDbContext db)=>{var x=await db.MaintenancePrograms.FindAsync(id);if(x is null)return Results.NotFound();x.Name=r.Name;x.Description=r.Description;x.VehicleModelMasterId=r.VehicleModelMasterId;x.VehicleVariantMasterId=r.VehicleVariantMasterId;x.EffectiveFrom=r.EffectiveFrom;x.EffectiveTo=r.EffectiveTo;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);});
+app.MapPut("/api/pm/programs/{id:guid}", async (Guid id,MaintenanceProgram r,AppDbContext db)=>
+{
+    var x = await db.MaintenancePrograms.FindAsync(id);
+    if (x is null) return Results.NotFound();
+    // Immutable identity: never create a replacement or assign x.Id / x.ProgramCode here.
+    if (r.Id != id || !string.Equals(r.ProgramCode, x.ProgramCode, StringComparison.Ordinal))
+        return Results.BadRequest(new { message = "Program identity cannot be changed. Reload the existing program and edit its details." });
+    var name = (r.Name ?? "").Trim();
+    if (name.Length == 0 || name.Length > 200) return Results.BadRequest(new { message = "Enter a Program Name up to 200 characters." });
+    if (r.EffectiveTo.HasValue && r.EffectiveTo.Value < r.EffectiveFrom)
+        return Results.BadRequest(new { message = "Effective end must not be earlier than effective start." });
+    var changedScope = x.VehicleModelMasterId != r.VehicleModelMasterId || x.VehicleVariantMasterId != r.VehicleVariantMasterId;
+    if (changedScope)
+    {
+        var hasVehicles = await db.Vehicles.AnyAsync(v => v.MaintenanceProgramId == id);
+        var hasPmHistory = await (from obligation in db.PmObligations
+                                  join plan in db.MaintenancePlans on obligation.MaintenancePlanId equals (Guid?)plan.Id
+                                  where plan.MaintenanceProgramId == id select obligation.Id).AnyAsync();
+        if (hasVehicles || hasPmHistory)
+            return Results.Conflict(new { message = "This program is already assigned to vehicles or used in PM history. Its model/variant scope cannot be changed here. Keep that scope to rename the program; create a new program for different applicability." });
+        var error = await ValidatePmProgramScopeAsync(db, r);
+        if (error is not null) return Results.BadRequest(new { message = error });
+    }
+    var previous = $"Name={x.Name}; Model={x.VehicleModelMasterId}; Variant={x.VehicleVariantMasterId}; Active={x.IsActive}";
+    x.Name = name; x.Description = (r.Description ?? "").Trim();
+    x.VehicleModelMasterId = r.VehicleModelMasterId; x.VehicleVariantMasterId = r.VehicleVariantMasterId;
+    x.EffectiveFrom = r.EffectiveFrom; x.EffectiveTo = r.EffectiveTo; x.IsActive = r.IsActive;
+    Audit(db, "UPDATE", "MaintenanceProgram", x.Id,
+        $"Before: {previous}. After: Name={x.Name}; Model={x.VehicleModelMasterId}; Variant={x.VehicleVariantMasterId}; Active={x.IsActive}. Levels and mappings retained.");
+    // This endpoint intentionally does not touch plans, triggers, matrix mappings or vehicle assignments.
+    await db.SaveChangesAsync(); return Results.Ok(x);
+});
 
 app.MapGet("/api/pm/plans", async (AppDbContext db) =>
 {
@@ -1151,6 +1294,13 @@ app.MapPost("/api/pm/enroll",async(VehicleEnrollmentRequest r,AppDbContext db)=>
     if(await db.Vehicles.AnyAsync(x=>x.Vin==r.Vin||x.RegistrationNumber==r.RegistrationNumber))return Results.Conflict(new{message="VIN or registration number already exists."});
     var model=await db.VehicleModelMasters.FindAsync(r.ModelMasterId);if(model is null)return Results.BadRequest(new{message="Vehicle model is required."});
     VehicleVariantMaster? variant=null;if(r.VariantMasterId.HasValue){variant=await db.VehicleVariantMasters.FindAsync(r.VariantMasterId.Value);if(variant is null||variant.VehicleModelMasterId!=model.Id)return Results.BadRequest(new{message="Selected variant does not belong to the model."});}
+    if (r.MaintenanceProgramId.HasValue)
+    {
+        var program = await db.MaintenancePrograms.AsNoTracking().FirstOrDefaultAsync(p => p.Id == r.MaintenanceProgramId.Value);
+        if (program is null || !program.IsActive || program.VehicleModelMasterId != model.Id
+            || (program.VehicleVariantMasterId.HasValue && program.VehicleVariantMasterId != variant?.Id))
+            return Results.BadRequest(new { message = "Select an active PM program applicable to this vehicle model and variant." });
+    }
     var v=new Vehicle{Vin=r.Vin.Trim(),RegistrationNumber=r.RegistrationNumber.Trim().ToUpperInvariant(),Model=model.Name,Variant=variant?.Name??"",VehicleTypeCode=model.VehicleTypeCode,ManufacturerCode=model.ManufacturerCode,ModelMasterId=model.Id,VariantMasterId=variant?.Id,ImageUrl=string.IsNullOrWhiteSpace(r.ImageUrl)?(variant?.ImageUrl??model.ImageUrl):r.ImageUrl,MotorNumber=r.MotorNumber,PurchaseDate=r.PurchaseDate,PurchaseCost=r.PurchaseCost,InvoiceNumber=r.InvoiceNumber,DealerName=r.DealerName,CommissioningDate=r.CommissioningDate,RegistrationDate=r.RegistrationDate,RegistrationExpiry=r.RegistrationExpiry,InsuranceNumber=r.InsuranceNumber,InsuranceStartDate=r.InsuranceStartDate,InsuranceExpiryDate=r.InsuranceExpiryDate,WarrantyStartDate=r.WarrantyStartDate,WarrantyExpiryDate=r.WarrantyExpiryDate,BatteryWarrantyStartDate=r.BatteryWarrantyStartDate,BatteryWarrantyExpiryDate=r.BatteryWarrantyExpiryDate,OdometerKm=r.OdometerKm,OperatingHours=r.OperatingHours,EnergyKwh=r.EnergyKwh,BatterySoc=r.BatterySoc,DepotCode=r.DepotCode,ServiceCentreCode=r.ServiceCentreCode,CustomerCode=r.CustomerCode,OwnershipTypeCode=r.OwnershipTypeCode,MaintenanceProgramId=r.MaintenanceProgramId,Remarks=r.Remarks,Status="Available",IsActive=true};
     db.Vehicles.Add(v);Audit(db,"ENROLL","Vehicle",v.Id,v.RegistrationNumber,r.CreatedBy);await db.SaveChangesAsync();await EnsurePmObligationsAsync(db,v);return Results.Created($"/api/vehicles/{v.Id}",v);
 });
