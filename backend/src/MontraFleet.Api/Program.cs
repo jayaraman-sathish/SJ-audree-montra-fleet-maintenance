@@ -297,6 +297,11 @@ using (var scope = app.Services.CreateScope())
           "Result" text NOT NULL DEFAULT 'Pending', "Remarks" text NOT NULL DEFAULT '',
           "EvidenceReference" text NOT NULL DEFAULT '', "ExecutedAt" timestamptz NULL,
           "ExecutedBy" text NOT NULL DEFAULT '');
+        ALTER TABLE "WorkTemplateFields" ADD COLUMN IF NOT EXISTS "SuggestedIssueCode" text NOT NULL DEFAULT '';
+        ALTER TABLE "WorkTemplateFieldInstances" ADD COLUMN IF NOT EXISTS "SuggestedIssueCode" text NOT NULL DEFAULT '';
+        ALTER TABLE "Defects" ADD COLUMN IF NOT EXISTS "ChecklistFieldInstanceId" uuid NULL;
+        ALTER TABLE "Defects" ADD COLUMN IF NOT EXISTS "CorrectiveWorkItemId" uuid NULL;
+        CREATE INDEX IF NOT EXISTS "IX_Defects_ChecklistFieldInstanceId" ON "Defects" ("ChecklistFieldInstanceId");
     """);
 
 
@@ -353,7 +358,16 @@ using (var scope = app.Services.CreateScope())
         new MasterOption{Category="DOCUMENT_TYPE",Code="WARRANTY",Name="Warranty",Value="Vehicle",Description="Vehicle / battery warranty document",SortOrder=30},
         new MasterOption{Category="DOCUMENT_TYPE",Code="PURCHASE_INVOICE",Name="Purchase Invoice",Value="Vehicle",Description="Vehicle purchase invoice",SortOrder=40},
         new MasterOption{Category="DOCUMENT_TYPE",Code="SERVICE_REPORT",Name="Service Report",Value="Work Order",Description="Service completion report",SortOrder=50},
-        new MasterOption{Category="DOCUMENT_TYPE",Code="QC_REPORT",Name="QC / Release Report",Value="Work Order",Description="QC and release evidence",SortOrder=60}
+        new MasterOption{Category="DOCUMENT_TYPE",Code="QC_REPORT",Name="QC / Release Report",Value="Work Order",Description="QC and release evidence",SortOrder=60},
+        new MasterOption{Category="ISSUE_TYPE",Code="COOL-HOSE",Name="Coolant hose leakage",Value="Major",Description="Replace coolant hose",SortOrder=10},
+        new MasterOption{Category="ISSUE_TYPE",Code="COOL-LOW",Name="Coolant level low",Value="Minor",Description="Top up coolant and inspect for leakage",SortOrder=20},
+        new MasterOption{Category="ISSUE_TYPE",Code="BRK-PAD",Name="Brake pad worn",Value="Major",Description="Replace brake pad",SortOrder=30},
+        new MasterOption{Category="ISSUE_TYPE",Code="BRK-HOSE",Name="Brake hose damaged or leaking",Value="Major",Description="Replace brake hose",SortOrder=40},
+        new MasterOption{Category="ISSUE_TYPE",Code="TYRE-DMG",Name="Tyre damaged",Value="Major",Description="Replace tyre",SortOrder=50},
+        new MasterOption{Category="ISSUE_TYPE",Code="HV-ISO",Name="HV isolation failed",Value="Critical",Description="Stop work and perform HV diagnosis",SortOrder=60},
+        new MasterOption{Category="ISSUE_TYPE",Code="BATT-TEMP",Name="Battery abnormal temperature",Value="Major",Description="Perform battery diagnostic",SortOrder=70},
+        new MasterOption{Category="ISSUE_TYPE",Code="CONN-LOOSE",Name="Electrical connector loose",Value="Minor",Description="Secure or repair connector",SortOrder=80},
+        new MasterOption{Category="ISSUE_TYPE",Code="OTHER",Name="Other issue",Value="Minor",Description="Assess and define corrective work",SortOrder=90}
     };
     foreach(var o in seedOptions)
         if(!await db.MasterOptions.AnyAsync(x=>x.Category==o.Category&&x.Code==o.Code)) db.MasterOptions.Add(o);
@@ -477,11 +491,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.2" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.2" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -489,7 +503,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.2" });
 });
 
 static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
@@ -543,11 +557,11 @@ static async Task GenerateNextPmObligationAsync(AppDbContext db, PmObligation co
     {
         switch(t.TriggerCode.ToUpperInvariant())
         {
-            case "ODOMETER": o.DueReading=(plan.RecurrenceBasis=="ScheduledDue"&&completed.DueReading.HasValue?completed.DueReading.Value:v.OdometerKm)+t.IntervalValue;break;
-            case "OPERATING_HOURS": o.DueOperatingHours=(plan.RecurrenceBasis=="ScheduledDue"&&completed.DueOperatingHours.HasValue?completed.DueOperatingHours.Value:v.OperatingHours)+t.IntervalValue;break;
-            case "KWH": o.DueEnergyKwh=(plan.RecurrenceBasis=="ScheduledDue"&&completed.DueEnergyKwh.HasValue?completed.DueEnergyKwh.Value:v.EnergyKwh)+t.IntervalValue;break;
+            case "ODOMETER": o.DueReading=(completed.DueReading.HasValue?completed.DueReading.Value:v.OdometerKm)+t.IntervalValue;break;
+            case "OPERATING_HOURS": o.DueOperatingHours=(completed.DueOperatingHours.HasValue?completed.DueOperatingHours.Value:v.OperatingHours)+t.IntervalValue;break;
+            case "KWH": o.DueEnergyKwh=(completed.DueEnergyKwh.HasValue?completed.DueEnergyKwh.Value:v.EnergyKwh)+t.IntervalValue;break;
             case "TIME":
-                var basis=plan.RecurrenceBasis=="ScheduledDue"&&completed.DueDate.HasValue?completed.DueDate.Value:DateTime.UtcNow;
+                var basis=completed.DueDate.HasValue?completed.DueDate.Value:DateTime.UtcNow;
                 o.DueDate=NextTimeDue(basis,null,t.IntervalValue,t.UnitCode);break;
         }
     }
@@ -746,7 +760,7 @@ app.MapPut("/api/work-templates/{id:guid}/fields", async (Guid id,List<WorkTempl
             WorkTemplateId=id,SectionName=string.IsNullOrWhiteSpace(r.SectionName)?"General":r.SectionName,
             Sequence=r.Sequence<=0?seq*10:r.Sequence,FieldCode=code,Label=r.Label,FieldType=r.FieldType,
             UnitCode=r.UnitCode,IsMandatory=r.IsMandatory,MinValue=r.MinValue,MaxValue=r.MaxValue,
-            Options=r.Options,FailureAction=r.FailureAction});
+            Options=r.Options,FailureAction=r.FailureAction,SuggestedIssueCode=r.SuggestedIssueCode});
     }
     t.Version+=1;await db.SaveChangesAsync();return Results.Ok(new{version=t.Version,fields=rows.Count});
 });
@@ -775,11 +789,21 @@ app.MapDelete("/api/pm/plans/{planId:guid}/template/{mappingId:guid}", async(Gui
     if(x is null)return Results.NotFound();db.MaintenancePlanTemplates.Remove(x);await db.SaveChangesAsync();return Results.NoContent();
 });
 
+app.MapGet("/api/issues/catalog", async(AppDbContext db) =>
+{
+    var rows=await db.MasterOptions.AsNoTracking().Where(x=>x.Category=="ISSUE_TYPE"&&x.IsActive).OrderBy(x=>x.SortOrder).ThenBy(x=>x.Name)
+        .Select(x=>new{code=x.Code,name=x.Name,severity=x.Value,correctiveAction=x.Description}).ToListAsync();
+    return Results.Ok(rows);
+});
+
 app.MapGet("/api/tasks/{workItemId:guid}/paper-form", async(Guid workItemId,AppDbContext db)=>
 {
     var instance=await db.WorkTemplateInstances.AsNoTracking().FirstOrDefaultAsync(x=>x.WorkItemId==workItemId);
     if(instance is null)return Results.NotFound(new{message="No work template is attached to this task."});
-    var fields=await db.WorkTemplateFieldInstances.AsNoTracking().Where(x=>x.WorkTemplateInstanceId==instance.Id).OrderBy(x=>x.Sequence).ToListAsync();
+    var raw=await db.WorkTemplateFieldInstances.AsNoTracking().Where(x=>x.WorkTemplateInstanceId==instance.Id).OrderBy(x=>x.Sequence).ToListAsync();
+    var fieldIds=raw.Select(x=>x.Id).ToList();
+    var issueFieldIds=await db.Defects.AsNoTracking().Where(x=>x.ChecklistFieldInstanceId.HasValue&&fieldIds.Contains(x.ChecklistFieldInstanceId.Value)&&x.Disposition!="Closed").Select(x=>x.ChecklistFieldInstanceId!.Value).ToListAsync();
+    var fields=raw.Select(x=>new{x.Id,x.WorkTemplateInstanceId,x.SourceTemplateFieldId,x.SectionName,x.Sequence,x.FieldCode,x.Label,x.FieldType,x.UnitCode,x.IsMandatory,x.MinValue,x.MaxValue,x.Options,x.FailureAction,x.SuggestedIssueCode,x.Value,x.Result,x.Remarks,x.EvidenceReference,x.ExecutedAt,x.ExecutedBy,issueRecorded=issueFieldIds.Contains(x.Id)});
     return Results.Ok(new{instance,fields});
 });
 app.MapPut("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}", async(Guid workItemId,Guid fieldId,WorkTemplateFieldResultRequest r,AppDbContext db)=>
@@ -788,26 +812,43 @@ app.MapPut("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}", async(Guid 
     var f=await db.WorkTemplateFieldInstances.FirstOrDefaultAsync(x=>x.Id==fieldId&&x.WorkTemplateInstanceId==instance.Id);if(f is null)return Results.NotFound();
     f.Value=r.Value;f.Result=r.Result;f.Remarks=r.Remarks;f.EvidenceReference=r.EvidenceReference;f.ExecutedBy=r.ExecutedBy;f.ExecutedAt=DateTime.UtcNow;
     if(instance.Status=="Not Started")instance.Status="In Progress";
-    Defect? defect=null;
     var failed=string.Equals(r.Result,"Fail",StringComparison.OrdinalIgnoreCase)||string.Equals(r.Result,"Not OK",StringComparison.OrdinalIgnoreCase);
-    if(failed&&string.Equals(f.FailureAction,"Create Defect",StringComparison.OrdinalIgnoreCase))
-    {
-        var wi=await db.WorkItems.FindAsync(workItemId);
-        if(wi!=null)
-        {
-            var job=await db.JobCards.FindAsync(wi.JobCardId);var evt=job==null?null:await db.ServiceEvents.FindAsync(job.ServiceEventId);
-            if(job!=null&&evt!=null)
-            {
-                defect=new Defect{VehicleId=evt.VehicleId,JobCardId=job.Id,WorkItemId=wi.Id,
-                    DefectNumber=$"DF-{DateTime.UtcNow:yyyy}-{(await db.Defects.CountAsync()+1):D6}",
-                    Category="Work Template",Severity="Major",
-                    Description=$"{instance.TemplateName}: {f.Label} - {r.Value}",Disposition="Open"};
-                db.Defects.Add(defect);
-            }
-        }
-    }
-    await db.SaveChangesAsync();return Results.Ok(new{field=f,defect});
+    var issuePrompt=failed&&(string.Equals(f.FailureAction,"Create Defect",StringComparison.OrdinalIgnoreCase)||string.Equals(f.FailureAction,"Block Completion",StringComparison.OrdinalIgnoreCase));
+    var issueRecorded=await db.Defects.AnyAsync(d=>d.ChecklistFieldInstanceId==f.Id&&d.Disposition!="Closed");
+    await db.SaveChangesAsync();
+    return Results.Ok(new{field=f,issuePrompt=issuePrompt&&!issueRecorded,suggestedIssueCode=f.SuggestedIssueCode,issueRecorded});
 });
+
+app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/issue", async(Guid workItemId,Guid fieldId,TechnicianIssueRequest r,AppDbContext db)=>
+{
+    var instance=await db.WorkTemplateInstances.FirstOrDefaultAsync(x=>x.WorkItemId==workItemId);if(instance is null)return Results.NotFound();
+    var f=await db.WorkTemplateFieldInstances.FirstOrDefaultAsync(x=>x.Id==fieldId&&x.WorkTemplateInstanceId==instance.Id);if(f is null)return Results.NotFound();
+    var existing=await db.Defects.FirstOrDefaultAsync(d=>d.ChecklistFieldInstanceId==fieldId&&d.Disposition!="Closed");
+    if(existing is not null)
+    {
+        var existingTask=existing.CorrectiveWorkItemId.HasValue?await db.WorkItems.FindAsync(existing.CorrectiveWorkItemId.Value):null;
+        return Results.Ok(new{message="Issue is already recorded.",issue=existing.Description,severity=existing.Severity,correctiveTask=existingTask?.Description??""});
+    }
+    var issue=await db.MasterOptions.AsNoTracking().FirstOrDefaultAsync(x=>x.Category=="ISSUE_TYPE"&&x.Code==r.FailureCode&&x.IsActive);
+    if(issue is null)return Results.BadRequest(new{message="Select an issue from the list."});
+    var wi=await db.WorkItems.FindAsync(workItemId);if(wi is null)return Results.NotFound();
+    var job=await db.JobCards.FindAsync(wi.JobCardId);if(job is null)return Results.NotFound();
+    var evt=await db.ServiceEvents.FindAsync(job.ServiceEventId);if(evt is null)return Results.NotFound();
+    var severity=string.IsNullOrWhiteSpace(issue.Value)?"Minor":issue.Value;
+    var correctiveAction=string.IsNullOrWhiteSpace(issue.Description)?"Assess and repair":issue.Description;
+    var priority=severity.Equals("Critical",StringComparison.OrdinalIgnoreCase)?"P1":severity.Equals("Major",StringComparison.OrdinalIgnoreCase)?"P2":"P3";
+    var corrective=new WorkItem{JobCardId=job.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-C",WorkType="Corrective Repair",Description=correctiveAction,Status="Not Started",Priority=priority,DependencyTaskId=workItemId,RequiresQc=true,UpdatedAt=DateTime.UtcNow};
+    db.WorkItems.Add(corrective);
+    var defect=new Defect{VehicleId=evt.VehicleId,JobCardId=job.Id,WorkItemId=workItemId,ChecklistFieldInstanceId=fieldId,CorrectiveWorkItemId=corrective.Id,
+        DefectNumber=$"DF-{DateTime.UtcNow:yyyy}-{(await db.Defects.CountAsync()+1):D6}",Category="Checklist Finding",Severity=severity,Description=issue.Name,Disposition="Open",FailureCode=issue.Code};
+    db.Defects.Add(defect);
+    if(!string.IsNullOrWhiteSpace(r.EvidenceReference))f.EvidenceReference=r.EvidenceReference;
+    if(!string.IsNullOrWhiteSpace(r.Remarks))f.Remarks=r.Remarks;
+    Audit(db,"CREATE","Issue",defect.Id,$"{issue.Name} from {instance.TemplateName} / {f.Label}");
+    await db.SaveChangesAsync();
+    return Results.Ok(new{message="Issue saved and corrective work created.",issue=issue.Name,severity,correctiveTask=correctiveAction});
+});
+
 app.MapPost("/api/tasks/{workItemId:guid}/paper-form/complete", async(Guid workItemId,AppDbContext db)=>
 {
     var instance=await db.WorkTemplateInstances.FirstOrDefaultAsync(x=>x.WorkItemId==workItemId);if(instance is null)return Results.NotFound();
@@ -834,7 +875,7 @@ app.MapGet("/api/pm/plans", async (AppDbContext db) =>
     var plans=await db.MaintenancePlans.AsNoTracking().OrderBy(x=>x.Sequence).ThenBy(x=>x.PlanCode).ToListAsync();var triggers=await db.MaintenancePlanTriggers.AsNoTracking().ToListAsync();var tasks=await db.MaintenancePlanTasks.AsNoTracking().ToListAsync();var templates=await db.MaintenancePlanTemplates.AsNoTracking().ToListAsync();
     return Results.Ok(plans.Select(x=>new{x.Id,x.MaintenanceProgramId,x.PlanCode,x.Name,x.Description,x.RecurrenceBasis,x.Sequence,x.IsActive,triggers=triggers.Where(t=>t.MaintenancePlanId==x.Id),taskCount=tasks.Count(t=>t.MaintenancePlanId==x.Id),templateCount=templates.Count(t=>t.MaintenancePlanId==x.Id)}));
 });
-app.MapPost("/api/pm/plans",async(MaintenancePlan r,AppDbContext db)=>{r.Id=Guid.NewGuid();r.PlanCode=r.PlanCode.Trim().ToUpperInvariant();if(!await db.MaintenancePrograms.AnyAsync(x=>x.Id==r.MaintenanceProgramId))return Results.BadRequest(new{message="Maintenance program not found."});if(await db.MaintenancePlans.AnyAsync(x=>x.MaintenanceProgramId==r.MaintenanceProgramId&&x.PlanCode==r.PlanCode))return Results.Conflict(new{message="Plan code already exists in this program."});db.MaintenancePlans.Add(r);await db.SaveChangesAsync();return Results.Ok(r);});
+app.MapPost("/api/pm/plans",async(MaintenancePlan r,AppDbContext db)=>{r.Id=Guid.NewGuid();r.PlanCode=r.PlanCode.Trim().ToUpperInvariant();r.RecurrenceBasis="ScheduledDue";if(!await db.MaintenancePrograms.AnyAsync(x=>x.Id==r.MaintenanceProgramId))return Results.BadRequest(new{message="Maintenance program not found."});if(await db.MaintenancePlans.AnyAsync(x=>x.MaintenanceProgramId==r.MaintenanceProgramId&&x.PlanCode==r.PlanCode))return Results.Conflict(new{message="Plan code already exists in this program."});db.MaintenancePlans.Add(r);await db.SaveChangesAsync();return Results.Ok(r);});
 app.MapPost("/api/pm/plans/{id:guid}/trigger",async(Guid id,MaintenancePlanTrigger r,AppDbContext db)=>{if(!await db.MaintenancePlans.AnyAsync(x=>x.Id==id))return Results.NotFound();var code=r.TriggerCode.Trim().ToUpperInvariant();var x=await db.MaintenancePlanTriggers.FirstOrDefaultAsync(t=>t.MaintenancePlanId==id&&t.TriggerCode==code);if(x is null){x=new MaintenancePlanTrigger{MaintenancePlanId=id,TriggerCode=code};db.MaintenancePlanTriggers.Add(x);}x.IntervalValue=r.IntervalValue;x.InitialDueValue=r.InitialDueValue;x.UnitCode=r.UnitCode;x.WarningValue=r.WarningValue;x.ToleranceValue=r.ToleranceValue;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);});
 app.MapPost("/api/pm/plans/{id:guid}/task",async(Guid id,MaintenancePlanTask r,AppDbContext db)=>{if(!await db.MaintenancePlans.AnyAsync(x=>x.Id==id)||!await db.ServiceTaskMasters.AnyAsync(x=>x.Id==r.ServiceTaskMasterId))return Results.BadRequest();var x=await db.MaintenancePlanTasks.FirstOrDefaultAsync(t=>t.MaintenancePlanId==id&&t.ServiceTaskMasterId==r.ServiceTaskMasterId);if(x is null){x=new MaintenancePlanTask{MaintenancePlanId=id,ServiceTaskMasterId=r.ServiceTaskMasterId};db.MaintenancePlanTasks.Add(x);}x.Sequence=r.Sequence;x.IsMandatory=r.IsMandatory;await db.SaveChangesAsync();return Results.Ok(x);});
 app.MapDelete("/api/pm/plans/{planId:guid}/task/{mappingId:guid}",async(Guid planId,Guid mappingId,AppDbContext db)=>{var x=await db.MaintenancePlanTasks.FirstOrDefaultAsync(t=>t.Id==mappingId&&t.MaintenancePlanId==planId);if(x is null)return Results.NotFound();db.MaintenancePlanTasks.Remove(x);await db.SaveChangesAsync();return Results.NoContent();});
@@ -985,7 +1026,7 @@ app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbCo
                         db.WorkTemplateFieldInstances.Add(new WorkTemplateFieldInstance{WorkTemplateInstanceId=inst.Id,
                             SourceTemplateFieldId=f.Id,SectionName=f.SectionName,Sequence=f.Sequence,FieldCode=f.FieldCode,
                             Label=f.Label,FieldType=f.FieldType,UnitCode=f.UnitCode,IsMandatory=f.IsMandatory,
-                            MinValue=f.MinValue,MaxValue=f.MaxValue,Options=f.Options,FailureAction=f.FailureAction});
+                            MinValue=f.MinValue,MaxValue=f.MaxValue,Options=f.Options,FailureAction=f.FailureAction,SuggestedIssueCode=f.SuggestedIssueCode});
                 }
             }
             else

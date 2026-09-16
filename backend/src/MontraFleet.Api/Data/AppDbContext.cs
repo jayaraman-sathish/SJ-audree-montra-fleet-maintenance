@@ -74,6 +74,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         m.Entity<WorkTemplateField>().HasIndex(x => new { x.WorkTemplateId, x.FieldCode }).IsUnique();
         m.Entity<MaintenancePlanTemplate>().HasIndex(x => new { x.MaintenancePlanId, x.WorkTemplateId }).IsUnique();
         m.Entity<WorkTemplateInstance>().HasIndex(x => x.WorkItemId).IsUnique();
+        m.Entity<Defect>().HasIndex(x => x.ChecklistFieldInstanceId);
         m.Entity<WorkTemplate>().Property(x => x.StandardHours).HasPrecision(18, 2);
         m.Entity<WorkTemplateField>().Property(x => x.MinValue).HasPrecision(18, 4);
         m.Entity<WorkTemplateField>().Property(x => x.MaxValue).HasPrecision(18, 4);
