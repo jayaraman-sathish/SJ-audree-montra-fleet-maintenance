@@ -1,19 +1,352 @@
-import {Component,OnInit} from '@angular/core';import{CommonModule}from'@angular/common';import{FormsModule}from'@angular/forms';import{HttpClient}from'@angular/common/http';import * as XLSX from 'xlsx';
-@Component({selector:'app-pm-program-matrix',standalone:true,imports:[CommonModule,FormsModule],template:`
-<section class="page"><div class="title"><div><h2>PM Programs</h2><p>Configure the service ladder and maintenance task matrix. The execution checklist is generated automatically.</p></div><div><button class="btn btn-outline" (click)="file.click()">Import Service Schedule</button><input #file type="file" accept=".xlsx,.xls" hidden (change)="importSchedule($event)"> <button class="btn btn-primary" (click)="openProgram()">+ Program</button></div></div>
-<div class="programbar"><label>Maintenance Program<select [(ngModel)]="programId" (change)="loadMatrix()"><option *ngFor="let p of programs" [value]="p.id">{{p.programCode}} · {{p.name}}</option></select></label><div class="pill" *ngIf="matrix?.program">{{matrix.program.name}}</div></div>
-<div class="tabs"><button [class.active]="tab==='ladder'" (click)="tab='ladder'">Service Ladder</button><button [class.active]="tab==='matrix'" (click)="tab='matrix'">Task Matrix</button><button [class.active]="tab==='replacement'" (click)="tab='replacement'">Replacement / Lubrication</button></div>
+import { Component, HostListener, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
+import * as XLSX from 'xlsx';
+import {
+  ProgramHeader, ModelReference, VariantReference, ServiceLevel,
+  variantOptions, programValidation, looksLikeIntervalName,
+  levelFromApi, levelValidation, levelPayload, intervalDescription, usageUnit, unitLabel
+} from './pm-program.helpers';
 
-<div class="card" *ngIf="tab==='ladder'"><div class="section-title"><div><h3>Service Ladder</h3><p>Each level is a reusable PM master. Vehicle-specific next due is calculated only after enrollment.</p></div><button class="btn btn-primary" (click)="addLevel()">+ Service Level</button></div>
-<table><tr><th>Level</th><th>Name</th><th>Usage basis</th><th>Every</th><th>Unit</th><th>Calendar</th><th>Order</th><th></th></tr><tr *ngFor="let l of levels;let i=index"><td><input [(ngModel)]="l.planCode"></td><td><input [(ngModel)]="l.name"></td><td><select [(ngModel)]="l.usageTriggerCode" (change)="syncUnit(l)"><option value="ODOMETER">Odometer</option><option value="OPERATING_HOURS">Operating Hours</option><option value="KWH">Energy Used</option></select></td><td><input type="number" [(ngModel)]="l.usageInterval"></td><td><select [(ngModel)]="l.usageUnit"><option value="KM">km</option><option value="HOUR">hours</option><option value="KWH">kWh</option></select></td><td><input type="number" [(ngModel)]="l.calendarMonths" placeholder="months"></td><td><input type="number" [(ngModel)]="l.sequence"></td><td><button class="icon" (click)="levels.splice(i,1)">×</button></td></tr></table><div class="note">Whichever configured trigger is reached first makes that service level due. Alert thresholds are optional operational settings, not vehicle history.</div><div class="actions"><button class="btn btn-primary" (click)="saveLadder()">Save Service Ladder</button></div></div>
+@Component({
+  selector: 'app-pm-program-matrix', standalone: true, imports: [CommonModule, FormsModule],
+  templateUrl: './pm-program-matrix.component.html',
+  styleUrls: ['./pm-program-matrix.component.css']
+})
+export class PmProgramMatrixComponent implements OnInit {
+  programs: ProgramHeader[] = [];
+  models: ModelReference[] = [];
+  variants: VariantReference[] = [];
+  programId = '';
+  matrix: any = null;
+  levels: ServiceLevel[] = [];
+  tasks: any[] = [];
+  assignments: any[] = [];
+  replacements: any[] = [];
+  tab = 'details';
+  search = ''; section = ''; action = ''; severity = '';
+  bulkLevel = ''; copyFrom = ''; copyTo = '';
+  modal = ''; message = ''; modalMessage = ''; noticeKind = 'info';
+  loadingPrograms = false; loadingMatrix = false; saving = false;
+  referencesReady = false; referenceError = false;
+  ladderDirty = false; matrixDirty = false;
+  private requestNumber = 0;
+  private referenceLoads = 0;
+  originalProgram: ProgramHeader | undefined;
+  program: ProgramHeader = this.emptyProgram();
+  importWorkbook: XLSX.WorkBook | null = null;
+  importSheets: string[] = [];
+  importSheet = ''; importFilename = '';
+  importPreview: any = null;
+  readonly calendarUnits = [{ code: 'DAY', name: 'Days' }, { code: 'MONTH', name: 'Months' }, { code: 'YEAR', name: 'Years' }];
+  readonly usageUnits = usageUnit;
+  readonly showUnit = unitLabel;
+  readonly describeInterval = intervalDescription;
 
-<div class="card" *ngIf="tab==='matrix'"><div class="section-title"><div><h3>Maintenance Task Matrix</h3><p>Search or filter hundreds of checks, then assign them to service levels. Higher levels can copy the previous level.</p></div><button class="btn btn-outline" (click)="downloadMatrix()">Download Matrix Template</button></div>
-<div class="filters"><input [(ngModel)]="search" placeholder="Search task code or description"><select [(ngModel)]="section"><option value="">All Sections</option><option *ngFor="let x of sections" [value]="x">{{x}}</option></select><select [(ngModel)]="action"><option value="">All Actions</option><option value="I">Inspect</option><option value="M">Measure</option><option value="F">Function Test</option><option value="D">Diagnostic</option><option value="T">Torque</option><option value="L">Lubricate</option><option value="R">Replace</option></select><select [(ngModel)]="severity"><option value="">All Severity</option><option>Critical</option><option>Major</option><option>Minor</option></select></div>
-<div class="bulk" *ngIf="levels.length"><span>Bulk:</span><select [(ngModel)]="bulkLevel"><option *ngFor="let l of levels" [value]="l.id">{{l.planCode}}</option></select><button class="btn btn-outline" (click)="assignVisible(true)">Assign visible</button><button class="btn btn-outline" (click)="assignVisible(false)">Clear visible</button><span>Copy</span><select [(ngModel)]="copyFrom"><option *ngFor="let l of levels" [value]="l.id">{{l.planCode}}</option></select><span>to</span><select [(ngModel)]="copyTo"><option *ngFor="let l of levels" [value]="l.id">{{l.planCode}}</option></select><button class="btn btn-outline" (click)="copyLevel()">Copy</button></div>
-<div class="matrix-wrap"><table class="matrix"><tr><th>Section</th><th>Code</th><th>Maintenance Task</th><th>Action</th><th>Spec / Limit</th><th>Severity</th><th *ngFor="let l of levels">{{l.planCode}}</th></tr><tr *ngFor="let t of filteredTasks()"><td>{{t.sectionName}}</td><td><b>{{t.taskCode}}</b></td><td>{{t.taskName}}</td><td>{{actionName(t.actionCode)}}</td><td>{{t.specification||'-'}}</td><td>{{t.severity||'-'}}</td><td class="center" *ngFor="let l of levels"><input type="checkbox" [checked]="isMapped(l.id,t.id)" (change)="toggle(l.id,t.id,$any($event.target).checked)"></td></tr></table></div><div class="actions"><span>{{assignmentCount()}} mappings</span><button class="btn btn-primary" (click)="saveMatrix()">Save Program Matrix</button></div></div>
+  constructor(private h: HttpClient) {}
 
-<div class="card" *ngIf="tab==='replacement'"><div class="section-title"><div><h3>Replacement / Lubrication Rules</h3><p>Imported from the engineering schedule. Blank intervals remain inactive until Montra engineering defines them.</p></div></div><table><tr><th>Platform</th><th>System</th><th>Item</th><th>Action</th><th>Part No.</th><th>Usage Interval</th><th>Unit</th><th>Months</th><th>Active</th><th></th></tr><tr *ngFor="let r of replacements"><td>{{r.platform}}</td><td>{{r.systemName}}</td><td>{{r.itemName}}</td><td>{{actionName(r.actionCode)}}</td><td><input [(ngModel)]="r.partNumber"></td><td><input type="number" [(ngModel)]="r.usageInterval"></td><td><select [(ngModel)]="r.usageUnit"><option value="">-</option><option value="KM">km</option><option value="HOUR">hours</option></select></td><td><input type="number" [(ngModel)]="r.intervalMonths"></td><td><input type="checkbox" [(ngModel)]="r.isActive"></td><td><button class="btn btn-outline" (click)="saveReplacement(r)">Save</button></td></tr></table></div>
+  ngOnInit(): void {
+    this.h.get<ModelReference[]>('/api/pm/vehicle-models').subscribe({
+      next: rows => { this.models = rows; this.loadedReference(); },
+      error: e => this.referenceFailed(e)
+    });
+    this.h.get<VariantReference[]>('/api/pm/vehicle-variants').subscribe({
+      next: rows => { this.variants = rows; this.loadedReference(); },
+      error: e => this.referenceFailed(e)
+    });
+    this.h.get<any[]>('/api/pm/replacement-rules').subscribe({
+      next: rows => this.replacements = rows,
+      error: e => this.notify(this.errorMessage(e, 'Unable to load replacement rules.'), 'error')
+    });
+    this.loadPrograms();
+  }
+  private loadedReference(): void {
+    this.referenceLoads++;
+    this.referencesReady = this.referenceLoads === 2 && !this.referenceError;
+  }
+  private referenceFailed(e: any): void {
+    this.referenceError = true;
+    this.notify(this.errorMessage(e, 'Vehicle masters could not be loaded. Refresh before editing applicability.'), 'error');
+  }
+  private emptyProgram(): ProgramHeader {
+    return {
+      programCode: '', name: '', description: '', vehicleModelMasterId: null,
+      vehicleVariantMasterId: null, effectiveFrom: new Date().toISOString(), effectiveTo: null, isActive: true
+    };
+  }
+  get selectedProgram(): ProgramHeader | null { return this.matrix?.program || this.programs.find(p => p.id === this.programId) || null; }
+  get programModelName(): string {
+    const id = this.selectedProgram?.vehicleModelMasterId;
+    return id ? this.models.find(m => m.id === id)?.name || 'Model reference unavailable' : 'Model not assigned';
+  }
+  get variantScopeLabel(): string {
+    const p = this.selectedProgram;
+    if (!p?.vehicleModelMasterId) return 'Model must be assigned';
+    if (!p.vehicleVariantMasterId) return 'All variants of this model';
+    return this.variants.find(v => v.id === p.vehicleVariantMasterId)?.name || 'Variant reference unavailable';
+  }
+  get formVariants(): VariantReference[] { return variantOptions(this.program.vehicleModelMasterId, this.variants, this.program.vehicleVariantMasterId); }
+  get formModels(): ModelReference[] { return this.models.filter(m => m.isActive || m.id === this.program.vehicleModelMasterId); }
+  get intervalNameHint(): boolean { return looksLikeIntervalName(this.program.name); }
+  get hasUnsavedChanges(): boolean { return this.ladderDirty || this.matrixDirty; }
+  get hasSavedLevels(): boolean { return this.levels.some(l => !!l.id); }
+  get matrixReady(): boolean { return this.hasSavedLevels && !this.ladderDirty && !this.loadingMatrix; }
+  get programBusy(): boolean { return this.loadingPrograms || this.loadingMatrix || this.saving; }
+  get sections(): string[] { return [...new Set(this.tasks.map(t => String(t.sectionName || 'General')))].sort(); }
 
-<div class="backdrop" *ngIf="modal"></div><div class="modal" *ngIf="modal==='program'"><div class="modal-head"><h3>New PM Program</h3><button (click)="modal=''">×</button></div><div class="fields"><label>Program Code<input [(ngModel)]="program.programCode"></label><label>Program Name<input [(ngModel)]="program.name"></label><label>Vehicle Model<select [(ngModel)]="program.vehicleModelMasterId"><option value="">Select</option><option *ngFor="let m of models" [value]="m.id">{{m.name}}</option></select></label><label>Description<input [(ngModel)]="program.description"></label></div><div class="actions"><button class="btn btn-outline" (click)="modal=''">Cancel</button><button class="btn btn-primary" (click)="saveProgram()">Save Program</button></div></div>
-<p class="msg">{{message}}</p></section>`,styles:[`.page{padding:24px}.title,.section-title,.actions,.programbar,.filters,.bulk{display:flex;align-items:center;justify-content:space-between;gap:10px}.title h2,.card h3{margin:0}.title p,.section-title p{color:#64748b}.programbar{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin:14px 0}.programbar label{display:flex;align-items:center;gap:10px;font-weight:700}.programbar select{min-width:360px}.pill{background:#eaf3ff;padding:8px 12px;border-radius:18px}.tabs{display:flex;border-bottom:1px solid #cbd5e1;margin-bottom:14px}.tabs button{border:0;background:transparent;padding:10px 16px}.tabs .active{font-weight:700;border-bottom:3px solid #1266d5}.card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-top:12px}.btn{border:1px solid #cbd5e1;border-radius:7px;padding:9px 13px;background:#fff;cursor:pointer}.btn-primary{background:#1266d5;color:#fff;border-color:#1266d5}.btn-outline{background:#fff}.filters{justify-content:flex-start;margin:12px 0}.filters input{min-width:300px}.filters input,.filters select,.bulk select,.programbar select,table input,table select,.fields input,.fields select{padding:8px;border:1px solid #cbd5e1;border-radius:6px}.bulk{justify-content:flex-start;background:#f8fafc;padding:8px;border-radius:8px;margin-bottom:10px}.matrix-wrap{overflow:auto;max-height:58vh}.matrix{min-width:1050px}.matrix th{position:sticky;top:0;background:#f8fafc;z-index:1}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px;border-bottom:1px solid #e5e7eb;font-size:12px}th{color:#475569}.center{text-align:center}.center input{transform:scale(1.15)}.note{background:#eef6ff;border:1px solid #bfdbfe;padding:10px;border-radius:8px;margin-top:12px}.actions{justify-content:flex-end;margin-top:14px}.icon{border:0;background:#fee2e2;color:#b91c1c;border-radius:6px;padding:6px 10px}.backdrop{position:fixed;inset:0;background:#0f172a88;z-index:50}.modal{position:fixed;z-index:51;left:50%;top:50%;transform:translate(-50%,-50%);width:min(700px,94vw);background:#fff;border-radius:12px;padding:18px}.modal-head{display:flex;justify-content:space-between}.modal-head button{border:0;background:none;font-size:24px}.fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.fields label{display:grid;gap:5px}.msg{color:#b91c1c}`]})
-export class PmProgramMatrixComponent implements OnInit{programs:any[]=[];models:any[]=[];programId='';matrix:any=null;levels:any[]=[];tasks:any[]=[];assignments:any[]=[];replacements:any[]=[];tab='ladder';search='';section='';action='';severity='';bulkLevel='';copyFrom='';copyTo='';modal='';message='';program:any={programCode:'',name:'',description:'',vehicleModelMasterId:'',effectiveFrom:new Date().toISOString(),isActive:true};constructor(private h:HttpClient){}ngOnInit(){this.h.get<any[]>('/api/pm/vehicle-models').subscribe(x=>this.models=x);this.h.get<any[]>('/api/pm/replacement-rules').subscribe(x=>this.replacements=x);this.loadPrograms()}loadPrograms(){this.h.get<any[]>('/api/pm/programs').subscribe(x=>{this.programs=x;if(!this.programId&&x.length)this.programId=x[0].id;if(this.programId)this.loadMatrix()})}loadMatrix(){if(!this.programId)return;this.h.get<any>(`/api/pm/programs/${this.programId}/service-matrix`).subscribe(x=>{this.matrix=x;this.tasks=x.tasks||[];this.assignments=x.assignments||[];this.levels=(x.levels||[]).map((l:any)=>{const usage=(l.triggers||[]).find((t:any)=>t.triggerCode!=='TIME');const tm=(l.triggers||[]).find((t:any)=>t.triggerCode==='TIME');return{id:l.id,planCode:l.planCode,name:l.name,sequence:l.sequence,isActive:l.isActive,usageTriggerCode:usage?.triggerCode||'ODOMETER',usageInterval:usage?.intervalValue||null,usageUnit:usage?.unitCode||'KM',warningUsage:usage?.warningValue||0,calendarMonths:tm?.intervalValue||null,warningDays:tm?.warningValue||0}});if(this.levels.length){this.bulkLevel=this.bulkLevel||this.levels[0].id;this.copyFrom=this.copyFrom||this.levels[0].id;this.copyTo=this.copyTo||this.levels[Math.min(1,this.levels.length-1)].id}})}openProgram(){this.program={programCode:'',name:'',description:'',vehicleModelMasterId:'',effectiveFrom:new Date().toISOString(),isActive:true};this.modal='program'}saveProgram(){this.h.post<any>('/api/pm/programs',this.program).subscribe({next:x=>{this.modal='';this.programId=x.id;this.loadPrograms()},error:e=>this.message=e.error?.message||'Unable to save program'})}addLevel(){this.levels.push({planCode:'',name:'',sequence:(this.levels.length+1)*10,isActive:true,usageTriggerCode:'ODOMETER',usageInterval:null,usageUnit:'KM',warningUsage:0,calendarMonths:null,warningDays:0})}syncUnit(l:any){l.usageUnit=l.usageTriggerCode==='OPERATING_HOURS'?'HOUR':l.usageTriggerCode==='KWH'?'KWH':'KM'}saveLadder(){this.h.put(`/api/pm/programs/${this.programId}/service-ladder`,this.levels).subscribe({next:()=>{this.message='Service ladder saved.';this.loadMatrix()},error:e=>this.message=e.error?.message||'Unable to save ladder'})}get sections(){return[...new Set(this.tasks.map(x=>x.sectionName))].sort()}filteredTasks(){const q=this.search.toLowerCase();return this.tasks.filter(t=>(!q||t.taskCode.toLowerCase().includes(q)||t.taskName.toLowerCase().includes(q))&&(!this.section||t.sectionName===this.section)&&(!this.action||t.actionCode===this.action)&&(!this.severity||t.severity===this.severity))}isMapped(planId:string,taskId:string){return this.assignments.some(x=>x.maintenancePlanId===planId&&x.maintenanceTaskDefinitionId===taskId)}toggle(planId:string,taskId:string,on:boolean){const i=this.assignments.findIndex(x=>x.maintenancePlanId===planId&&x.maintenanceTaskDefinitionId===taskId);if(on&&i<0)this.assignments.push({maintenancePlanId:planId,maintenanceTaskDefinitionId:taskId,sequence:(this.assignments.filter(x=>x.maintenancePlanId===planId).length+1)*10,isMandatory:true});if(!on&&i>=0)this.assignments.splice(i,1)}assignVisible(on:boolean){if(!this.bulkLevel)return;for(const t of this.filteredTasks())this.toggle(this.bulkLevel,t.id,on)}copyLevel(){if(!this.copyFrom||!this.copyTo||this.copyFrom===this.copyTo)return;const src=this.assignments.filter(x=>x.maintenancePlanId===this.copyFrom);for(const a of src)this.toggle(this.copyTo,a.maintenanceTaskDefinitionId,true)}assignmentCount(){return this.assignments.length}saveMatrix(){this.h.put(`/api/pm/programs/${this.programId}/task-matrix`,this.assignments).subscribe({next:()=>{this.message='Task matrix saved.';this.loadMatrix()},error:e=>this.message=e.error?.message||'Unable to save matrix'})}actionName(c:string){return({I:'Inspect',M:'Measure',F:'Function Test',D:'Diagnostic',T:'Torque / Secure',L:'Lubricate',R:'Replace'} as any)[c]||c}saveReplacement(r:any){this.h.put(`/api/pm/replacement-rules/${r.id}`,r).subscribe(()=>this.message='Replacement rule saved.')}downloadMatrix(){const rows=this.tasks.map(t=>{const r:any={'Section':t.sectionName,'Code':t.taskCode,'Task':t.taskName,'Action':t.actionCode,'Spec / Limit':t.specification,'Severity':t.severity};for(const l of this.levels)r[l.planCode]=this.isMapped(l.id,t.id)?t.actionCode:'';return r});const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Task Matrix');XLSX.writeFile(wb,`${this.matrix?.program?.programCode||'PM'}_Task_Matrix.xlsx`)}importSchedule(ev:Event){const f=(ev.target as HTMLInputElement).files?.[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{try{const wb=XLSX.read(rd.result,{type:'array'});const name=(this.matrix?.program?.name||'').toUpperCase();let sheet=wb.SheetNames.find(n=>n.startsWith('Matrix')&&((name.includes('EVIATOR')&&n.toUpperCase().includes('EVIATOR'))||(name.includes('SUPER AUTO')&&n.toUpperCase().includes('SUPER AUTO'))||(name.includes('TRACTOR')&&n.toUpperCase().includes('TRACTOR'))||(name.includes('RHINO')&&n.toUpperCase().includes('RHINO'))))||wb.SheetNames.find(n=>n.startsWith('Matrix'))||wb.SheetNames[0];const arr:any[][]=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,defval:''}) as any;const hi=arr.findIndex(r=>String(r[0]).trim()==='Section'&&String(r[1]).trim()==='Code');if(hi<0)throw new Error('Matrix header not found');const h=arr[hi];const levels:any[]=[];for(let c=6;c<h.length;c++){const raw=String(h[c]||'');if(!raw)continue;const lines=raw.split(/\n/);const code=lines[0].trim();const rule=lines.slice(1).join(' ');const um=rule.match(/([\d,]+)\s*(km|hours?)/i);const cm=rule.match(/(\d+)\s*months?/i);levels.push({planCode:code,name:code,sequence:(c-5)*10,usageTriggerCode:um&&/hour/i.test(um[2])?'OPERATING_HOURS':'ODOMETER',usageInterval:um?Number(um[1].replace(/,/g,'')):null,usageUnit:um&&/hour/i.test(um[2])?'HOUR':'KM',calendarMonths:cm?Number(cm[1]):null,isActive:true,column:c})}const ts:any[]=[];const as:any[]=[];for(let r=hi+1;r<arr.length;r++){const row=arr[r];if(!row[1]||!row[2])continue;const task={sectionName:String(row[0]||''),taskCode:String(row[1]).trim(),taskName:String(row[2]).trim(),actionCode:String(row[3]||'I').trim(),specification:String(row[4]||''),severity:String(row[5]||''),unitCode:'',suggestedIssueCode:'',sortOrder:(r-hi)*10,isActive:true};ts.push(task);for(const l of levels)if(String(row[l.column]||'').trim())as.push({planCode:l.planCode,taskCode:task.taskCode,sequence:(r-hi)*10,isMandatory:true})}this.h.post(`/api/pm/programs/${this.programId}/import-matrix`,{levels,tasks:ts,assignments:as}).subscribe({next:()=>{this.message=`Imported ${sheet}: ${ts.length} tasks.`;this.loadMatrix()},error:e=>this.message=e.error?.message||'Import failed'})}catch(e:any){this.message=e.message||'Unable to read schedule'}};rd.readAsArrayBuffer(f)}}
+  @HostListener('window:beforeunload', ['$event'])
+  beforeUnload(event: BeforeUnloadEvent): void {
+    if (this.hasUnsavedChanges) { event.preventDefault(); event.returnValue = ''; }
+  }
+  loadPrograms(): void {
+    this.loadingPrograms = true;
+    this.h.get<ProgramHeader[]>('/api/pm/programs').subscribe({
+      next: rows => {
+        this.programs = rows; this.loadingPrograms = false;
+        if (!this.programId && rows.length) this.programId = rows[0].id || '';
+        if (this.programId) this.loadMatrix();
+      }, error: e => { this.loadingPrograms = false; this.notify(this.errorMessage(e, 'Unable to load programs.'), 'error'); }
+    });
+  }
+  changeProgram(id: string): void {
+    if (id === this.programId || this.programBusy) return;
+    if (this.hasUnsavedChanges && !window.confirm('Discard the unsaved service-level or task-matrix changes and switch program?')) return;
+    this.programId = id; this.tab = 'details'; this.message = '';
+    this.loadMatrix();
+  }
+  loadMatrix(): void {
+    if (!this.programId) return;
+    const id = this.programId; const request = ++this.requestNumber;
+    this.loadingMatrix = true; this.matrix = null;
+    this.levels = []; this.tasks = []; this.assignments = [];
+    this.bulkLevel = ''; this.copyFrom = ''; this.copyTo = '';
+    this.ladderDirty = false; this.matrixDirty = false;
+    this.h.get<any>(`/api/pm/programs/${id}/service-matrix`).subscribe({
+      next: data => {
+        if (request !== this.requestNumber || id !== this.programId) return;
+        this.matrix = data; this.tasks = data.tasks || []; this.assignments = data.assignments || [];
+        this.levels = (data.levels || []).map(levelFromApi);
+        this.bulkLevel = this.levels[0]?.id || '';
+        this.copyFrom = this.bulkLevel; this.copyTo = this.levels[1]?.id || '';
+        this.loadingMatrix = false;
+      }, error: e => {
+        if (request !== this.requestNumber) return;
+        this.loadingMatrix = false; this.notify(this.errorMessage(e, 'Unable to load the selected program.'), 'error');
+      }
+    });
+  }
+  selectTab(tab: string): void {
+    if (this.programBusy) return;
+    this.tab = tab;
+  }
+  openProgram(edit = false): void {
+    if (!this.referencesReady || this.programBusy) return;
+    if (this.hasUnsavedChanges) { this.notify('Save the current service levels and matrix before editing or creating a program.', 'error'); return; }
+    if (edit && !this.selectedProgram) return;
+    this.originalProgram = edit ? { ...this.selectedProgram! } : undefined;
+    this.program = this.originalProgram ? { ...this.originalProgram } : this.emptyProgram();
+    this.modalMessage = ''; this.modal = 'program';
+  }
+  onModelChange(): void { this.program.vehicleVariantMasterId = null; this.modalMessage = ''; }
+  closeModal(): void { if (!this.saving) { this.modal = ''; this.modalMessage = ''; } }
+  saveProgram(): void {
+    if (this.saving || !this.referencesReady) return;
+    const problem = programValidation(this.program, this.models, this.variants, this.originalProgram);
+    if (problem) { this.modalMessage = problem; return; }
+    const editing = !!this.originalProgram?.id;
+    // Copy metadata, not the whole service-matrix response. No ladder/matrix endpoint is called here.
+    const body: ProgramHeader = {
+      ...this.program, id: this.originalProgram?.id,
+      programCode: this.originalProgram?.programCode || this.program.programCode.trim().toUpperCase(),
+      name: this.program.name.trim(), description: this.program.description.trim(),
+      vehicleVariantMasterId: this.program.vehicleVariantMasterId || null,
+      effectiveFrom: this.originalProgram?.effectiveFrom || this.program.effectiveFrom,
+      effectiveTo: this.originalProgram?.effectiveTo || null
+    };
+    this.saving = true; this.modalMessage = '';
+    const request = editing
+      ? this.h.put<ProgramHeader>(`/api/pm/programs/${this.originalProgram!.id}`, body)
+      : this.h.post<ProgramHeader>('/api/pm/programs', body);
+    request.subscribe({
+      next: saved => {
+        this.saving = false; this.modal = ''; this.programId = saved.id || '';
+        if (editing) {
+          this.programs = this.programs.map(p => p.id === saved.id ? saved : p);
+          if (this.matrix?.program?.id === saved.id) this.matrix = { ...this.matrix, program: saved };
+          this.notify('Program details updated. Existing service levels, matrix mappings and vehicle assignments are retained.', 'success');
+        } else {
+          this.programs = [...this.programs, saved]; this.tab = 'ladder'; this.loadMatrix();
+          this.notify('Program created. Add its service levels, then select the required checks in Task Matrix.', 'success');
+        }
+      }, error: e => { this.saving = false; this.modalMessage = this.errorMessage(e, 'Unable to save the program. Nothing was recreated.'); }
+    });
+  }
+  addLevel(): void {
+    if (!this.matrix || this.programBusy) return;
+    this.levels.push({ planCode: '', name: '', sequence: (this.levels.length + 1) * 10, isActive: true,
+      usageTriggerCode: 'ODOMETER', usageInterval: null, usageUnit: 'KM',
+      calendarInterval: null, calendarUnit: 'MONTH', warningUsage: 0, warningDays: 0 });
+    this.ladderDirty = true;
+  }
+  markLadderDirty(): void { this.ladderDirty = true; }
+  syncUnit(level: ServiceLevel): void {
+    level.usageUnit = usageUnit(level.usageTriggerCode);
+    level.usageInterval = null; level.warningUsage = 0; this.ladderDirty = true;
+  }
+  changeCalendarUnit(level: ServiceLevel): void {
+    // Never carry a numeric value across units: 90 days is not 90 months.
+    level.calendarInterval = null; level.warningDays = 0; this.ladderDirty = true;
+  }
+  removeNewLevel(index: number): void {
+    if (this.levels[index]?.id) return; // Saved levels are deactivated, not deleted.
+    this.levels.splice(index, 1); this.ladderDirty = true;
+  }
+  discardEdits(): void {
+    if (window.confirm('Discard the unsaved changes and reload the saved program?')) this.loadMatrix();
+  }
+  saveLadder(): void {
+    if (this.programBusy) return;
+    const error = levelValidation(this.levels);
+    if (error) { this.notify(error, 'error'); return; }
+    if (this.matrixDirty) { this.notify('Save the task matrix before saving changed service levels.', 'error'); return; }
+    this.saving = true;
+    this.h.put(`/api/pm/programs/${this.programId}/service-ladder`, levelPayload(this.levels)).subscribe({
+      next: () => { this.saving = false; this.notify('Service levels saved. Open Task Matrix to define the work at each level.', 'success'); this.loadMatrix(); },
+      error: e => { this.saving = false; this.notify(this.errorMessage(e, 'Unable to save service levels.'), 'error'); }
+    });
+  }
+  filteredTasks(): any[] {
+    const q = this.search.trim().toLowerCase();
+    return this.tasks.filter(t => (!q || `${t.taskCode} ${t.taskName}`.toLowerCase().includes(q))
+      && (!this.section || t.sectionName === this.section) && (!this.action || t.actionCode === this.action)
+      && (!this.severity || t.severity === this.severity));
+  }
+  isMapped(planId: string | undefined, taskId: string): boolean {
+    return this.assignments.some(a => a.maintenancePlanId === planId && a.maintenanceTaskDefinitionId === taskId);
+  }
+  toggle(planId: string | undefined, taskId: string, on: boolean): void {
+    if (!planId || !this.matrixReady || this.saving) return;
+    const i = this.assignments.findIndex(a => a.maintenancePlanId === planId && a.maintenanceTaskDefinitionId === taskId);
+    if (on && i < 0) this.assignments.push({ maintenancePlanId: planId, maintenanceTaskDefinitionId: taskId,
+      sequence: (this.assignments.filter(a => a.maintenancePlanId === planId).length + 1) * 10, isMandatory: true });
+    if (!on && i >= 0) this.assignments.splice(i, 1);
+    this.matrixDirty = true;
+  }
+  assignVisible(on: boolean): void {
+    if (!this.bulkLevel || !this.matrixReady) return;
+    for (const task of this.filteredTasks()) this.toggle(this.bulkLevel, task.id, on);
+  }
+  copyLevel(): void {
+    if (!this.copyFrom || !this.copyTo || this.copyFrom === this.copyTo || !this.matrixReady) return;
+    const source = this.assignments.filter(a => a.maintenancePlanId === this.copyFrom);
+    for (const row of source) this.toggle(this.copyTo, row.maintenanceTaskDefinitionId, true);
+  }
+  assignmentCount(): number { return this.assignments.length; }
+  checksForLevel(id: string | undefined): number { return this.assignments.filter(a => a.maintenancePlanId === id).length; }
+  saveMatrix(): void {
+    if (!this.matrixReady || this.programBusy) return;
+    this.saving = true;
+    this.h.put(`/api/pm/programs/${this.programId}/task-matrix`, this.assignments).subscribe({
+      next: () => { this.saving = false; this.notify('Task matrix saved.', 'success'); this.loadMatrix(); },
+      error: e => { this.saving = false; this.notify(this.errorMessage(e, 'Unable to save the task matrix.'), 'error'); }
+    });
+  }
+  actionName(code: string): string {
+    return ({ I: 'Inspect', M: 'Measure', F: 'Function Test', D: 'Diagnostic', T: 'Torque / Secure', L: 'Lubricate', R: 'Replace' } as Record<string, string>)[code] || code;
+  }
+  saveReplacement(row: any): void {
+    if (this.saving) return;
+    this.saving = true;
+    this.h.put(`/api/pm/replacement-rules/${row.id}`, row).subscribe({
+      next: () => { this.saving = false; this.notify('Replacement rule saved.', 'success'); },
+      error: e => { this.saving = false; this.notify(this.errorMessage(e, 'Unable to save the replacement rule.'), 'error'); }
+    });
+  }
+  downloadMatrix(): void {
+    if (!this.matrixReady) return;
+    const rows = this.tasks.map(t => {
+      const row: any = { Section: t.sectionName, Code: t.taskCode, Task: t.taskName, Action: t.actionCode, 'Spec / Limit': t.specification, Severity: t.severity };
+      for (const level of this.levels) row[level.planCode] = this.isMapped(level.id, t.id) ? t.actionCode : '';
+      return row;
+    });
+    const ws = XLSX.utils.json_to_sheet(rows); const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Task Matrix');
+    XLSX.writeFile(wb, `${this.selectedProgram?.programCode || 'PM'}_Task_Matrix.xlsx`);
+  }
+  importSchedule(event: Event): void {
+    const input = event.target as HTMLInputElement; const file = input.files?.[0];
+    if (!file) return;
+    if (!this.matrix || this.hasUnsavedChanges || this.programBusy) { this.notify('Select a program and save any pending changes before importing.', 'error'); input.value = ''; return; }
+    if (file.size > 5 * 1024 * 1024) { this.notify('The schedule file must be 5 MB or smaller.', 'error'); input.value = ''; return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        this.importWorkbook = XLSX.read(reader.result, { type: 'array' });
+        this.importSheets = [...this.importWorkbook.SheetNames]; this.importSheet = '';
+        this.importFilename = file.name; this.importPreview = null; this.modalMessage = ''; this.modal = 'import';
+        // Deliberately do not infer a platform from the editable program NAME.
+      } catch { this.notify('Unable to read the workbook.', 'error'); }
+      input.value = '';
+    };
+    reader.onerror = () => { this.notify('Unable to read the selected file.', 'error'); input.value = ''; };
+    reader.readAsArrayBuffer(file);
+  }
+  previewImport(): void {
+    this.importPreview = null; this.modalMessage = '';
+    if (!this.importWorkbook || !this.importSheet) return;
+    try {
+      const rows = XLSX.utils.sheet_to_json(this.importWorkbook.Sheets[this.importSheet], { header: 1, defval: '' }) as any[][];
+      const headerIndex = rows.findIndex(r => String(r[0]).trim() === 'Section' && String(r[1]).trim() === 'Code');
+      if (headerIndex < 0) throw new Error('Choose a task-matrix sheet with Section and Code headers.');
+      const headers = rows[headerIndex]; const levels: any[] = [];
+      for (let c = 6; c < headers.length; c++) {
+        const parts = String(headers[c] || '').split(/\n/); const code = parts[0].trim();
+        if (!code) continue;
+        const saved = this.levels.find(l => l.planCode.toUpperCase() === code.toUpperCase());
+        const rule = parts.slice(1).join(' ');
+        const metric = rule.match(/([\d,]+)\s*(km|kwh|hours?)/i);
+        const calendar = rule.match(/(\d+)\s*(days?|months?|years?)/i);
+        if (!metric && !calendar && !saved) throw new Error(`Set up service level ${code} first, or include its interval in the matrix column header.`);
+        const level: ServiceLevel = saved ? { ...saved } : { planCode: code, name: code, sequence: (levels.length + 1) * 10,
+          isActive: true, usageTriggerCode: 'NONE', usageInterval: null, usageUnit: '', calendarInterval: null, calendarUnit: 'MONTH', warningUsage: 0, warningDays: 0 };
+        if (metric) {
+          level.usageTriggerCode = /hour/i.test(metric[2]) ? 'OPERATING_HOURS' : /kwh/i.test(metric[2]) ? 'KWH' : 'ODOMETER';
+          level.usageUnit = usageUnit(level.usageTriggerCode); level.usageInterval = Number(metric[1].replace(/,/g, ''));
+        }
+        if (calendar) { level.calendarInterval = Number(calendar[1]); level.calendarUnit = /day/i.test(calendar[2]) ? 'DAY' : /year/i.test(calendar[2]) ? 'YEAR' : 'MONTH'; }
+        levels.push({ ...level, column: c });
+      }
+      const invalid = levelValidation(levels); if (invalid) throw new Error(invalid);
+      const tasks: any[] = []; const assignments: any[] = []; const codes = new Set<string>();
+      for (let r = headerIndex + 1; r < rows.length; r++) {
+        const row = rows[r]; if (!row[1] || !row[2]) continue;
+        const code = String(row[1]).trim().toUpperCase();
+        if (codes.has(code)) throw new Error(`Duplicate task code ${code} at spreadsheet row ${r + 1}.`);
+        codes.add(code);
+        const action = String(row[3] || 'I').trim().toUpperCase();
+        if (!['I', 'M', 'F', 'D', 'T', 'L', 'R'].includes(action)) throw new Error(`Unrecognized action at row ${r + 1}: ${action}.`);
+        tasks.push({ sectionName: String(row[0] || ''), taskCode: code, taskName: String(row[2]).trim(), actionCode: action,
+          specification: String(row[4] || ''), severity: String(row[5] || ''), unitCode: '', suggestedIssueCode: '', sortOrder: (r - headerIndex) * 10, isActive: true });
+        for (const l of levels) {
+          const value = String(row[l.column] || '').trim();
+          if (value && !['-', 'N', 'NO', '0', 'FALSE'].includes(value.toUpperCase())) assignments.push({ planCode: l.planCode.toUpperCase(), taskCode: code, sequence: (r - headerIndex) * 10, isMandatory: true });
+        }
+      }
+      if (!tasks.length) throw new Error('This matrix contains no maintenance tasks.');
+      this.importPreview = { levels: levelPayload(levels), tasks, assignments };
+    } catch (e: any) { this.modalMessage = e.message || 'Unable to interpret this worksheet.'; }
+  }
+  confirmImport(): void {
+    if (!this.importPreview || this.saving) return;
+    this.saving = true;
+    this.h.post(`/api/pm/programs/${this.programId}/import-matrix`, this.importPreview).subscribe({
+      next: () => { this.saving = false; this.modal = ''; this.tab = 'matrix'; this.notify(`Imported the explicitly selected worksheet: ${this.importSheet}.`, 'success'); this.loadMatrix(); },
+      error: e => { this.saving = false; this.modalMessage = this.errorMessage(e, 'Import failed.'); }
+    });
+  }
+  private notify(message: string, kind = 'info'): void { this.message = message; this.noticeKind = kind; }
+  private errorMessage(error: any, fallback: string): string {
+    return typeof error?.error?.message === 'string' ? error.error.message : fallback;
+  }
+}

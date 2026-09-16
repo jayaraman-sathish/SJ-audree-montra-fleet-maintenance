@@ -1,0 +1,121 @@
+<section class="page">
+  <div class="title">
+    <div><h2>PM Programs</h2><p>One model maintenance program contains its service levels and the checks required at each level.</p></div>
+    <div class="button-row">
+      <button type="button" class="btn" (click)="file.click()" [disabled]="!matrix || programBusy || hasUnsavedChanges">Import Service Schedule</button>
+      <input #file type="file" accept=".xlsx,.xls" class="hidden-file" (change)="importSchedule($event)">
+      <button type="button" class="btn btn-primary" (click)="openProgram()" [disabled]="!referencesReady || programBusy || hasUnsavedChanges">+ New Program</button>
+    </div>
+  </div>
+  <div *ngIf="message" class="notice" [class.success]="noticeKind==='success'" [class.error]="noticeKind==='error'" role="status">{{message}}</div>
+  <div class="programbar">
+    <label for="selected-program">Maintenance Program</label>
+    <select id="selected-program" [ngModel]="programId" (ngModelChange)="changeProgram($event)" [disabled]="programBusy || !programs.length">
+      <option value="" *ngIf="!programs.length">No programs created</option>
+      <option *ngFor="let p of programs" [value]="p.id">{{p.programCode}} &middot; {{p.name}}{{p.isActive?'':' (Inactive)'}}</option>
+    </select>
+    <button type="button" class="btn" (click)="openProgram(true)" [disabled]="!matrix || !referencesReady || programBusy || hasUnsavedChanges">Edit Program</button>
+  </div>
+  <div class="context" *ngIf="selectedProgram && !loadingMatrix">
+    <span><small>Vehicle model</small><b>{{programModelName}}</b></span>
+    <span><small>Variant scope</small><b>{{variantScopeLabel}}</b></span>
+    <span><small>Program status</small><b>{{selectedProgram?.isActive?'Active':'Inactive'}}</b></span>
+    <span><small>Saved service levels</small><b>{{hasSavedLevels ? levels.length : 0}}</b></span>
+  </div>
+  <p *ngIf="loadingPrograms || loadingMatrix" role="status">Loading the selected program...</p>
+  <div class="empty card" *ngIf="!programs.length && !loadingPrograms">
+    <h3>Create the overall maintenance program first</h3>
+    <p>For example, name it <b>EVIATOR Standard Maintenance Program</b>. Add PM-5K and other approved intervals under Service Levels afterwards.</p>
+  </div>
+  <ng-container *ngIf="matrix && !loadingMatrix">
+    <div class="tabs" role="tablist" aria-label="Program configuration">
+      <button type="button" role="tab" [attr.aria-selected]="tab==='details'" [class.active]="tab==='details'" (click)="selectTab('details')">1. Program Details</button>
+      <button type="button" role="tab" [attr.aria-selected]="tab==='ladder'" [class.active]="tab==='ladder'" (click)="selectTab('ladder')">2. Service Levels</button>
+      <button type="button" role="tab" [attr.aria-selected]="tab==='matrix'" [class.active]="tab==='matrix'" (click)="selectTab('matrix')">3. Task Matrix</button>
+      <button type="button" role="tab" [attr.aria-selected]="tab==='replacement'" [class.active]="tab==='replacement'" (click)="selectTab('replacement')">Replacement / Lubrication</button>
+    </div>
+    <div class="card" *ngIf="tab==='details'">
+      <div class="section-title"><h3>Program Details</h3><button type="button" class="btn" (click)="openProgram(true)" [disabled]="!referencesReady || programBusy || hasUnsavedChanges">Edit Program Details</button></div>
+      <dl class="detail-grid">
+        <div><dt>Program Code</dt><dd>{{selectedProgram?.programCode}}</dd></div>
+        <div><dt>Program Name</dt><dd>{{selectedProgram?.name}}</dd></div>
+        <div><dt>Applicable Model</dt><dd>{{programModelName}}</dd></div>
+        <div><dt>Applicable Variants</dt><dd>{{variantScopeLabel}}</dd></div>
+        <div class="span2"><dt>Description</dt><dd>{{selectedProgram?.description || 'No description entered.'}}</dd></div>
+      </dl>
+      <div class="concept-grid">
+        <div><b>Program = overall schedule</b><p>A reusable maintenance regime for the selected model and variant scope. It is not one vehicle and not one service interval.</p></div>
+        <div><b>Service level = when</b><p>PM-5K is a level inside the program. Distance, operating hours, energy and calendar intervals belong to the level.</p></div>
+        <div><b>Task matrix = what</b><p>Select the required checks in each service-level column. One check can be reused at several levels.</p></div>
+      </div>
+      <div class="note">Renaming this program retains its existing service levels, matrix mappings and vehicle assignments. No records need to be deleted or recreated.</div>
+      <div class="actions"><button type="button" class="btn btn-primary" (click)="selectTab('ladder')">Continue to Service Levels</button></div>
+    </div>
+    <div class="card" *ngIf="tab==='ladder'">
+      <div class="section-title"><div><h3>Service Levels</h3><p>Define the approved service intervals within {{selectedProgram?.name}}. No vehicle service dates are entered here.</p></div><button type="button" class="btn btn-primary" (click)="addLevel()" [disabled]="programBusy">+ Service Level</button></div>
+      <div class="empty" *ngIf="!levels.length">No service levels configured. Add a level to create the corresponding Task Matrix column.</div>
+      <div class="table-wrap" *ngIf="levels.length">
+        <table class="ladder"><thead><tr><th>Level Code</th><th>Service Level Name</th><th>Usage Basis</th><th>Every</th><th>Unit</th><th>Calendar Every</th><th>Calendar Unit</th><th>Order</th><th>Active</th><th></th></tr></thead>
+          <tbody><tr *ngFor="let l of levels;let i=index">
+            <td><input [(ngModel)]="l.planCode" (ngModelChange)="markLadderDirty()" [disabled]="!!l.id || programBusy" placeholder="PM-5K" [attr.aria-label]="'Level code '+(i+1)"></td>
+            <td><input [(ngModel)]="l.name" (ngModelChange)="markLadderDirty()" [disabled]="programBusy" placeholder="Routine service" [attr.aria-label]="'Level name '+(i+1)"></td>
+            <td><select [(ngModel)]="l.usageTriggerCode" (ngModelChange)="syncUnit(l)" [disabled]="programBusy" aria-label="Usage basis"><option value="NONE">Calendar only</option><option value="ODOMETER">Odometer</option><option value="OPERATING_HOURS">Operating Hours</option><option value="KWH">Energy Used</option></select></td>
+            <td><input type="number" min="0" step="any" [(ngModel)]="l.usageInterval" (ngModelChange)="markLadderDirty()" [disabled]="programBusy || l.usageTriggerCode==='NONE'" aria-label="Usage interval"></td>
+            <td><span class="unit">{{showUnit(l.usageUnit) || '-'}}</span></td>
+            <td><input type="number" min="1" step="1" [(ngModel)]="l.calendarInterval" (ngModelChange)="markLadderDirty()" [disabled]="programBusy" placeholder="Optional" aria-label="Calendar interval"></td>
+            <td><select [(ngModel)]="l.calendarUnit" (ngModelChange)="changeCalendarUnit(l)" [disabled]="programBusy" aria-label="Calendar unit"><option *ngFor="let u of calendarUnits" [value]="u.code">{{u.name}}</option></select></td>
+            <td><input type="number" min="0" step="1" [(ngModel)]="l.sequence" (ngModelChange)="markLadderDirty()" [disabled]="programBusy" aria-label="Display order"></td>
+            <td><input type="checkbox" [(ngModel)]="l.isActive" (ngModelChange)="markLadderDirty()" [disabled]="programBusy" aria-label="Service level active"></td>
+            <td><button type="button" class="icon" *ngIf="!l.id" (click)="removeNewLevel(i)" [disabled]="programBusy" aria-label="Remove unsaved level">Remove</button><small *ngIf="l.id">Code retained</small></td>
+          </tr></tbody>
+        </table>
+      </div>
+      <div class="interval-summary" *ngFor="let l of levels"><b>{{l.planCode || 'New level'}}</b> &mdash; {{describeInterval(l)}} <span *ngIf="!l.isActive"> (Inactive)</span><p class="error-text" *ngIf="l.extraUsageConditions">Multiple legacy usage conditions detected. They have not been changed by this screen.</p></div>
+      <div class="note">Example only: PM-5K can be configured as <b>5,000 km OR 90 days</b>, whichever comes first. Use the approved model schedule. Changing a unit clears its unsaved value; 90 days is not converted to three months. Saved levels can be deactivated without deleting their history.</div>
+      <div class="actions"><span class="dirty" *ngIf="ladderDirty">Unsaved service-level changes</span><button type="button" class="btn" *ngIf="ladderDirty" (click)="discardEdits()" [disabled]="programBusy">Discard changes</button><button type="button" class="btn btn-primary" (click)="saveLadder()" [disabled]="programBusy || !levels.length || !ladderDirty">Save Service Levels</button><button type="button" class="btn" (click)="selectTab('matrix')" [disabled]="!matrixReady">Continue to Task Matrix</button></div>
+    </div>
+    <div class="card" *ngIf="tab==='matrix'">
+      <div class="section-title"><div><h3>Maintenance Task Matrix</h3><p>Rows are checks. Columns are service levels. Tick the work required at each level.</p></div><button type="button" class="btn" (click)="downloadMatrix()" [disabled]="!matrixReady || programBusy">Download Matrix Template</button></div>
+      <div class="note" *ngIf="!matrixReady">{{ladderDirty ? 'Save the service levels first so that all matrix columns have a saved reference.' : 'Add and save service levels to create the matrix columns.'}} <button type="button" class="btn" (click)="selectTab('ladder')">Open Service Levels</button></div>
+      <ng-container *ngIf="matrixReady">
+        <p class="hint">Applicable program: <b>{{programModelName}}</b> &middot; {{variantScopeLabel}}. The task library is shared; confirm technical applicability before selecting checks.</p>
+        <div class="filters"><input [(ngModel)]="search" placeholder="Search task code or description" aria-label="Search checks"><select [(ngModel)]="section" aria-label="Filter section"><option value="">All Sections</option><option *ngFor="let s of sections" [value]="s">{{s}}</option></select><select [(ngModel)]="action" aria-label="Filter action"><option value="">All Actions</option><option value="I">Inspect</option><option value="M">Measure</option><option value="F">Function Test</option><option value="D">Diagnostic</option><option value="T">Torque</option><option value="L">Lubricate</option><option value="R">Replace</option></select><select [(ngModel)]="severity" aria-label="Filter severity"><option value="">All Severity</option><option>Critical</option><option>Major</option><option>Minor</option></select></div>
+        <div class="bulk"><span>Apply to:</span><select [(ngModel)]="bulkLevel" aria-label="Bulk target"><option *ngFor="let l of levels" [value]="l.id">{{l.planCode}}</option></select><button type="button" class="btn" (click)="assignVisible(true)" [disabled]="programBusy">Assign visible</button><button type="button" class="btn" (click)="assignVisible(false)" [disabled]="programBusy">Clear visible</button><span>Copy from</span><select [(ngModel)]="copyFrom" aria-label="Copy from level"><option *ngFor="let l of levels" [value]="l.id">{{l.planCode}}</option></select><span>to</span><select [(ngModel)]="copyTo" aria-label="Copy to level"><option value="">Select target</option><option *ngFor="let l of levels" [value]="l.id">{{l.planCode}}</option></select><button type="button" class="btn" (click)="copyLevel()" [disabled]="programBusy || !copyTo || copyFrom===copyTo">Copy Checks</button></div>
+        <div class="matrix-wrap"><table class="matrix-table"><thead><tr><th>Section</th><th>Code</th><th>Maintenance Check</th><th>Action</th><th>Spec / Limit</th><th>Severity</th><th *ngFor="let l of levels">{{l.planCode}}<small>{{checksForLevel(l.id)}} selected</small></th></tr></thead><tbody><tr *ngFor="let t of filteredTasks()"><td>{{t.sectionName}}</td><td><b>{{t.taskCode}}</b></td><td>{{t.taskName}}</td><td>{{actionName(t.actionCode)}}</td><td>{{t.specification || '-'}}</td><td>{{t.severity || '-'}}</td><td class="center" *ngFor="let l of levels"><input type="checkbox" [checked]="isMapped(l.id,t.id)" (change)="toggle(l.id,t.id,$any($event.target).checked)" [disabled]="programBusy" [attr.aria-label]="t.taskCode+' for '+l.planCode"></td></tr></tbody></table><div class="empty" *ngIf="!filteredTasks().length">No checks match these filters.</div></div>
+        <div class="actions"><span>{{assignmentCount()}} mappings <b class="dirty" *ngIf="matrixDirty">&middot; Unsaved</b></span><button type="button" class="btn" *ngIf="matrixDirty" (click)="discardEdits()" [disabled]="programBusy">Discard changes</button><button type="button" class="btn btn-primary" (click)="saveMatrix()" [disabled]="programBusy || !matrixDirty">Save Task Matrix</button></div>
+      </ng-container>
+    </div>
+    <div class="card" *ngIf="tab==='replacement'">
+      <h3>Replacement / Lubrication Rules</h3><p class="hint">Shared engineering rules from the existing library. Review platform applicability; blank intervals remain inactive until approved.</p>
+      <div class="table-wrap"><table><thead><tr><th>Platform</th><th>System</th><th>Item</th><th>Action</th><th>Part No.</th><th>Usage Interval</th><th>Unit</th><th>Months</th><th>Active</th><th></th></tr></thead><tbody><tr *ngFor="let r of replacements"><td>{{r.platform}}</td><td>{{r.systemName}}</td><td>{{r.itemName}}</td><td>{{actionName(r.actionCode)}}</td><td><input [(ngModel)]="r.partNumber" aria-label="Part number"></td><td><input type="number" [(ngModel)]="r.usageInterval" aria-label="Replacement usage interval"></td><td><select [(ngModel)]="r.usageUnit" aria-label="Replacement unit"><option value="">-</option><option value="KM">km</option><option value="HOUR">hours</option></select></td><td><input type="number" [(ngModel)]="r.intervalMonths" aria-label="Replacement months"></td><td><input type="checkbox" [(ngModel)]="r.isActive" aria-label="Replacement rule active"></td><td><button type="button" class="btn" (click)="saveReplacement(r)" [disabled]="saving">Save</button></td></tr></tbody></table></div>
+    </div>
+  </ng-container>
+  <div class="backdrop" *ngIf="modal"></div>
+  <div class="modal" *ngIf="modal==='program'" role="dialog" aria-modal="true" aria-labelledby="program-heading">
+    <div class="modal-head"><div><h3 id="program-heading">{{originalProgram ? 'Edit' : 'New'}} Maintenance Program</h3><p class="hint">Name the complete maintenance schedule. Configure its intervals in Service Levels.</p></div><button type="button" class="close" (click)="closeModal()" [disabled]="saving" aria-label="Close program editor">&times;</button></div>
+    <form (ngSubmit)="saveProgram()">
+      <div class="fields">
+        <label>Program Code *<input name="programCode" [(ngModel)]="program.programCode" [disabled]="!!originalProgram || saving" maxlength="64" required><small *ngIf="originalProgram">Retained to preserve all existing references.</small></label>
+        <label>Program Name *<input name="programName" [(ngModel)]="program.name" [disabled]="saving" maxlength="200" placeholder="EVIATOR Standard Maintenance Program" required><small>Describe the model's overall maintenance regime, not PM-5K alone.</small></label>
+        <div class="note span2" *ngIf="intervalNameHint">This name appears to contain a service interval. Consider a name such as <b>EVIATOR Standard Maintenance Program</b>; keep 5,000 km / 90 days under Service Levels. You can retain your chosen name.</div>
+        <label>Vehicle Model *<select name="model" [(ngModel)]="program.vehicleModelMasterId" (ngModelChange)="onModelChange()" [disabled]="saving" required><option [ngValue]="null">Select model</option><option *ngFor="let m of formModels" [ngValue]="m.id">{{m.modelCode}} &middot; {{m.name}}</option></select></label>
+        <label>Variant Scope<select name="variant" [(ngModel)]="program.vehicleVariantMasterId" [disabled]="saving || !program.vehicleModelMasterId"><option [ngValue]="null">All variants of this model</option><option *ngFor="let v of formVariants" [ngValue]="v.id">Only: {{v.variantCode}} &middot; {{v.name}}</option></select><small>Choose all variants, or one specific variant. Unrelated models are never included.</small></label>
+        <label>Status<select name="status" [(ngModel)]="program.isActive" [disabled]="saving"><option [ngValue]="true">Active</option><option [ngValue]="false">Inactive</option></select></label>
+        <label class="span2">Description<textarea name="description" [(ngModel)]="program.description" [disabled]="saving" rows="3" placeholder="Purpose and applicability of this maintenance program"></textarea></label>
+      </div>
+      <div class="note" *ngIf="originalProgram"><b>This updates the same program record.</b> Name changes retain levels, task selections, enrolled vehicles and service history. Model or variant changes are blocked once a program is assigned to vehicles or used in PM history.</div>
+      <p class="error-text" role="alert" *ngIf="modalMessage">{{modalMessage}}</p>
+      <div class="actions"><button type="button" class="btn" (click)="closeModal()" [disabled]="saving">Cancel</button><button type="submit" class="btn btn-primary" [disabled]="saving || !referencesReady">{{saving ? 'Saving...' : originalProgram ? 'Save Program Changes' : 'Create Program'}}</button></div>
+    </form>
+  </div>
+  <div class="modal" *ngIf="modal==='import'" role="dialog" aria-modal="true" aria-labelledby="import-heading">
+    <div class="modal-head"><h3 id="import-heading">Import Service Schedule</h3><button type="button" class="close" (click)="closeModal()" [disabled]="saving" aria-label="Close import">&times;</button></div>
+    <p><b>Target program:</b> {{selectedProgram?.programCode}} &middot; {{selectedProgram?.name}}</p><p><b>Model / scope:</b> {{programModelName}} &middot; {{variantScopeLabel}}</p>
+    <label class="sheet-label">Worksheet in {{importFilename}}<select [(ngModel)]="importSheet" (ngModelChange)="previewImport()" [disabled]="saving"><option value="">Select the correct platform matrix</option><option *ngFor="let s of importSheets" [value]="s">{{s}}</option></select></label>
+    <p class="hint">The worksheet is not inferred from the program name. Select and verify it explicitly.</p>
+    <div *ngIf="importPreview"><p><b>{{importPreview.levels.length}}</b> service levels &middot; <b>{{importPreview.tasks.length}}</b> task rows &middot; <b>{{importPreview.assignments.length}}</b> selections</p><div class="table-wrap"><table><thead><tr><th>Level</th><th>Usage</th><th>Calendar</th></tr></thead><tbody><tr *ngFor="let l of importPreview.levels"><td>{{l.planCode}}</td><td>{{l.usageInterval || '-'}} {{showUnit(l.usageUnit)}}</td><td>{{l.calendarInterval || '-'}} {{l.calendarInterval ? showUnit(l.calendarUnit) : ''}}</td></tr></tbody></table></div>
+      <div class="note warning">Import replaces this program's saved matrix and can update matching task definitions in the shared library. Review the selected worksheet and retain a backup before proceeding.</div></div>
+    <p class="error-text" role="alert" *ngIf="modalMessage">{{modalMessage}}</p>
+    <div class="actions"><button type="button" class="btn" (click)="closeModal()" [disabled]="saving">Cancel</button><button type="button" class="btn btn-primary" (click)="confirmImport()" [disabled]="!importPreview || saving">{{saving ? 'Importing...' : 'Import Selected Worksheet'}}</button></div>
+  </div>
+</section>
