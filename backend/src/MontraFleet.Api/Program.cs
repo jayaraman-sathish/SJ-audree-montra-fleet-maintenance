@@ -491,11 +491,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.2" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.3" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.2" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.3" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -503,7 +503,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.2" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.3" });
 });
 
 static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
@@ -783,6 +783,20 @@ app.MapPost("/api/pm/plans/{id:guid}/template", async (Guid id,MaintenancePlanTe
     if(x is null){x=new MaintenancePlanTemplate{MaintenancePlanId=id,WorkTemplateId=r.WorkTemplateId};db.MaintenancePlanTemplates.Add(x);}
     x.Sequence=r.Sequence;x.IsMandatory=r.IsMandatory;await db.SaveChangesAsync();return Results.Ok(x);
 });
+app.MapPut("/api/pm/plans/{id:guid}/templates", async (Guid id,List<MaintenancePlanTemplate> rows,AppDbContext db)=>
+{
+    if(!await db.MaintenancePlans.AnyAsync(x=>x.Id==id))return Results.NotFound(new{message="Maintenance Plan not found."});
+    var requested=rows.Where(x=>x.WorkTemplateId!=Guid.Empty).GroupBy(x=>x.WorkTemplateId).Select(g=>g.First()).ToList();
+    var templateIds=requested.Select(x=>x.WorkTemplateId).ToList();
+    var validIds=await db.WorkTemplates.Where(x=>templateIds.Contains(x.Id)&&x.IsActive).Select(x=>x.Id).ToListAsync();
+    if(validIds.Count!=templateIds.Distinct().Count())return Results.BadRequest(new{message="One or more selected Work Templates are invalid or inactive."});
+    var existing=await db.MaintenancePlanTemplates.Where(x=>x.MaintenancePlanId==id).ToListAsync();
+    db.MaintenancePlanTemplates.RemoveRange(existing);
+    foreach(var r in requested.OrderBy(x=>x.Sequence))db.MaintenancePlanTemplates.Add(new MaintenancePlanTemplate{MaintenancePlanId=id,WorkTemplateId=r.WorkTemplateId,Sequence=r.Sequence,IsMandatory=r.IsMandatory});
+    await db.SaveChangesAsync();
+    return Results.Ok(new{planId=id,mapped=requested.Count});
+});
+
 app.MapDelete("/api/pm/plans/{planId:guid}/template/{mappingId:guid}", async(Guid planId,Guid mappingId,AppDbContext db)=>
 {
     var x=await db.MaintenancePlanTemplates.FirstOrDefaultAsync(m=>m.Id==mappingId&&m.MaintenancePlanId==planId);
