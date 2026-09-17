@@ -565,6 +565,7 @@ using (var scope = app.Services.CreateScope())
     await EnsureVariant(tipper,"TIPPER_2868_6X4","Tipper 2868 EV 6x4",null,"6x4 Tipper");
 
     await PmMasterSeedV177.SeedAsync(db);
+    await DemoVehicleSeedV179.SeedAsync(db);
 
 
     async Task<ServiceCentreMaster> EnsureCentre(string code,string name,string address,string city,string state,string postal,string mobile,string email)
