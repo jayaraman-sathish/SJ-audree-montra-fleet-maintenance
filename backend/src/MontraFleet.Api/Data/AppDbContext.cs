@@ -33,6 +33,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ServiceEvent> ServiceEvents => Set<ServiceEvent>();
     public DbSet<JobCard> JobCards => Set<JobCard>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
+    public DbSet<WorkLogEntry> WorkLogEntries => Set<WorkLogEntry>();
+    public DbSet<WorkEvidence> WorkEvidence => Set<WorkEvidence>();
     public DbSet<ChecklistExecution> ChecklistExecutions => Set<ChecklistExecution>();
     public DbSet<Defect> Defects => Set<Defect>();
     public DbSet<Breakdown> Breakdowns => Set<Breakdown>();
@@ -132,6 +134,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         m.Entity<WorkItem>().HasIndex(x => x.TaskCode).IsUnique();
         m.Entity<WorkItem>().Property(x => x.EstimatedHours).HasPrecision(18, 2);
         m.Entity<WorkItem>().Property(x => x.ActualHours).HasPrecision(18, 2);
+        m.Entity<WorkLogEntry>().HasIndex(x => new { x.JobCardId, x.CreatedAt });
+        m.Entity<WorkEvidence>().HasIndex(x => new { x.JobCardId, x.UploadedAt });
         m.Entity<WarrantyEntitlement>().Property(x => x.OdometerLimitKm).HasPrecision(18, 2);
         m.Entity<Campaign>().HasIndex(x => x.CampaignCode).IsUnique();
         m.Entity<VehicleCampaign>().HasIndex(x => new { x.VehicleId, x.CampaignId }).IsUnique();

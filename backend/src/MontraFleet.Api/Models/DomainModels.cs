@@ -155,6 +155,36 @@ public class WorkItem
     public bool RequiresHvAuthorization { get; set; }
 }
 
+public class WorkLogEntry
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid JobCardId { get; set; }
+    public Guid? WorkItemId { get; set; }
+    public Guid? ChecklistFieldInstanceId { get; set; }
+    public string EntryType { get; set; } = "Work Note";
+    public string Comment { get; set; } = string.Empty;
+    public string CreatedBy { get; set; } = "Service User";
+    public string CreatedRole { get; set; } = "Technician";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class WorkEvidence
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid JobCardId { get; set; }
+    public Guid? WorkItemId { get; set; }
+    public Guid? ChecklistFieldInstanceId { get; set; }
+    public Guid? WorkLogEntryId { get; set; }
+    public string Stage { get; set; } = "General";
+    public string FileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = "application/octet-stream";
+    public long FileSize { get; set; }
+    public byte[] Content { get; set; } = Array.Empty<byte>();
+    public string Caption { get; set; } = string.Empty;
+    public string UploadedBy { get; set; } = "Service User";
+    public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class ChecklistExecution
 {
     public Guid Id { get; set; } = Guid.NewGuid();
