@@ -888,7 +888,12 @@ app.MapGet("/api/dashboard/summary", async (AppDbContext db) =>
     var appointments = await db.Appointments.CountAsync(x => x.StartAt >= today && x.StartAt < tomorrow);
     var breakdowns = await db.Breakdowns.CountAsync(x => x.Status != "Closed");
     var pmOverdue = await db.PmObligations.CountAsync(x => x.Status == "Overdue");
-    return Results.Ok(new { totalVehicles=total, available, underMaintenance=maintenance, offHire, appointmentsToday=appointments, breakdownRequests=breakdowns, pmOverdue, slaBreaches=0, firstTimeFix=100.0, uptime30d=99.0 });
+    var activeServices=await (from e in db.ServiceEvents.AsNoTracking() join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id join j0 in db.JobCards.AsNoTracking() on e.Id equals j0.ServiceEventId into jj from j in jj.DefaultIfEmpty() where e.Status!="Closed" orderby e.OpenedAt descending select new{eventNumber=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,status=e.Status,openedAt=e.OpenedAt,jobCard=j!=null?j.JobCardNumber:"",technician=j!=null?j.Technician:"",bay=j!=null?j.Bay:""}).Take(8).ToListAsync();
+    var openTasks=await db.WorkItems.CountAsync(x=>x.Status!="Completed"&&x.Status!="Cancelled");
+    var unassignedTasks=await db.WorkItems.CountAsync(x=>x.Status!="Completed"&&x.Status!="Cancelled"&&!x.AssignedToTechnicianId.HasValue);
+    var dueSoon=await db.PmObligations.CountAsync(x=>x.Status=="Due"||x.Status=="Due Soon");
+    var recentBreakdowns=await (from b in db.Breakdowns.AsNoTracking() join v in db.Vehicles.AsNoTracking() on b.VehicleId equals v.Id where b.Status!="Closed" orderby b.ReportedAt descending select new{breakdownNumber=b.BreakdownNumber,vehicle=v.RegistrationNumber,complaint=b.Complaint,status=b.Status,reportedAt=b.ReportedAt,location=b.Location}).Take(8).ToListAsync();
+    return Results.Ok(new { totalVehicles=total, available, underMaintenance=maintenance, offHire, appointmentsToday=appointments, breakdownRequests=breakdowns, pmOverdue, dueSoon, openTasks, unassignedTasks, slaBreaches=0, firstTimeFix=100.0, uptime30d=99.0, activeServices, recentBreakdowns });
 });
 
 app.MapGet("/api/vehicles", async (AppDbContext db) =>
@@ -1473,7 +1478,13 @@ app.MapGet("/api/pm/due-board",async(AppDbContext db)=>
 });
 app.MapGet("/api/pm/history",async(AppDbContext db)=>
 {
-    var rows=await(from o in db.PmObligations.AsNoTracking() join v in db.Vehicles.AsNoTracking() on o.VehicleId equals v.Id where o.Status=="Completed" orderby o.CompletedAt descending select new{o.Id,vehicle=v.RegistrationNumber,v.Model,o.PlanCode,o.TriggerType,o.CompletedAt,o.DueDate,o.DueReading,o.DueOperatingHours,o.DueEnergyKwh}).ToListAsync();return Results.Ok(rows);
+    var completed=await (from o in db.PmObligations.AsNoTracking() join v in db.Vehicles.AsNoTracking() on o.VehicleId equals v.Id where o.Status=="Completed" orderby o.CompletedAt descending select new{o.Id,vehicle=v.RegistrationNumber,v.Model,o.PlanCode,o.TriggerType,o.CompletedAt,o.DueDate,o.DueReading,o.DueOperatingHours,o.DueEnergyKwh}).ToListAsync();
+    var obligationIds=completed.Select(x=>x.Id).ToList();
+    var events=await db.ServiceEvents.AsNoTracking().Where(x=>x.PmObligationId.HasValue&&obligationIds.Contains(x.PmObligationId.Value)).OrderByDescending(x=>x.ClosedAt).ToListAsync();
+    var eventIds=events.Select(x=>x.Id).ToList();
+    var jobs=await db.JobCards.AsNoTracking().Where(x=>eventIds.Contains(x.ServiceEventId)).ToListAsync();
+    var rows=completed.Select(x=>{var e=events.FirstOrDefault(y=>y.PmObligationId==x.Id);var j=e==null?null:jobs.FirstOrDefault(y=>y.ServiceEventId==e.Id);return new{x.Id,x.vehicle,x.Model,x.PlanCode,x.TriggerType,x.CompletedAt,x.DueDate,x.DueReading,x.DueOperatingHours,x.DueEnergyKwh,serviceEvent=e?.EventNumber??"",jobCard=j?.JobCardNumber??"",technician=j?.Technician??"",completedStatus="Completed"};}).ToList();
+    return Results.Ok(rows);
 });
 app.MapPost("/api/pm/obligations/{id:guid}/create-request",async(Guid id,AppDbContext db)=>
 {
