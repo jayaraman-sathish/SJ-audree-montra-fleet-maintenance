@@ -334,6 +334,24 @@ using (var scope = app.Services.CreateScope())
           "Quantity" numeric NULL, "Notes" text NOT NULL DEFAULT '', "IsActive" boolean NOT NULL DEFAULT true);
     """);
 
+    await db.Database.ExecuteSqlRawAsync("""
+        CREATE TABLE IF NOT EXISTS "WorkLogEntries" (
+          "Id" uuid PRIMARY KEY, "JobCardId" uuid NOT NULL, "WorkItemId" uuid NULL,
+          "ChecklistFieldInstanceId" uuid NULL, "EntryType" text NOT NULL DEFAULT 'Work Note',
+          "Comment" text NOT NULL DEFAULT '', "CreatedBy" text NOT NULL DEFAULT 'Service User',
+          "CreatedRole" text NOT NULL DEFAULT 'Technician', "CreatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        CREATE INDEX IF NOT EXISTS "IX_WorkLogEntries_JobCardId_CreatedAt" ON "WorkLogEntries" ("JobCardId","CreatedAt");
+
+        CREATE TABLE IF NOT EXISTS "WorkEvidence" (
+          "Id" uuid PRIMARY KEY, "JobCardId" uuid NOT NULL, "WorkItemId" uuid NULL,
+          "ChecklistFieldInstanceId" uuid NULL, "WorkLogEntryId" uuid NULL,
+          "Stage" text NOT NULL DEFAULT 'General', "FileName" text NOT NULL DEFAULT '',
+          "ContentType" text NOT NULL DEFAULT 'application/octet-stream', "FileSize" bigint NOT NULL DEFAULT 0,
+          "Content" bytea NOT NULL, "Caption" text NOT NULL DEFAULT '',
+          "UploadedBy" text NOT NULL DEFAULT 'Service User', "UploadedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP);
+        CREATE INDEX IF NOT EXISTS "IX_WorkEvidence_JobCardId_UploadedAt" ON "WorkEvidence" ("JobCardId","UploadedAt");
+    """);
+
 
 
 
@@ -1708,19 +1726,32 @@ app.MapPost("/api/tasks", async (TaskRequest r, AppDbContext db) =>
 app.MapPut("/api/tasks/{id:guid}/status", async (Guid id, TaskStatusRequest r, AppDbContext db) =>
 {
     var t=await db.WorkItems.FindAsync(id);if(t is null)return Results.NotFound();
-    var allowed=new[]{"Not Started","Assigned","In Progress","On Hold","Completed","Cancelled"};if(!allowed.Contains(r.Status))return Results.BadRequest(new{message="Invalid task status."});
-    if(r.Status=="In Progress" && t.DependencyTaskId.HasValue){var d=await db.WorkItems.FindAsync(t.DependencyTaskId.Value);if(d!=null&&d.Status!="Completed")return Results.Conflict(new{message=$"Dependency {d.TaskCode} must be completed first."});}
+    var allowed=new[]{"Pending Approval","Not Started","Assigned","In Progress","On Hold","Completed","Cancelled"};if(!allowed.Contains(r.Status))return Results.BadRequest(new{message="Invalid task status."});
+    if(r.Status=="In Progress" && t.DependencyTaskId.HasValue && t.WorkType!="Corrective Repair"){var d=await db.WorkItems.FindAsync(t.DependencyTaskId.Value);if(d!=null&&d.Status!="Completed")return Results.Conflict(new{message=$"Dependency {d.TaskCode} must be completed first."});}
+    if(r.Status=="Completed"&&(t.WorkType=="Corrective Repair"||t.WorkType=="Additional Work")&&string.IsNullOrWhiteSpace(r.CompletionRemarks))
+        return Results.Conflict(new{message="Record the work performed before completing this task."});
     t.Status=r.Status;t.ActualHours=r.ActualHours??t.ActualHours;t.CompletionRemarks=r.CompletionRemarks??t.CompletionRemarks;t.EvidenceReference=r.EvidenceReference??t.EvidenceReference;t.UpdatedAt=DateTime.UtcNow;
+    if(r.Status=="Completed")db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=t.JobCardId,WorkItemId=t.Id,EntryType="Task Completed",Comment=t.CompletionRemarks,CreatedBy=string.IsNullOrWhiteSpace(t.AssignedTo)?"Service User":t.AssignedTo,CreatedRole="Technician"});
     Audit(db,"STATUS","Task",t.Id,$"{t.TaskCode}:{r.Status}");await db.SaveChangesAsync();return Results.Ok(t);
 });
 
 app.MapPut("/api/tasks/{id:guid}/assign", async (Guid id, TaskAssignRequest r, AppDbContext db) =>
 {
     var t=await db.WorkItems.FindAsync(id);if(t is null)return Results.NotFound();var tech=await db.Technicians.FindAsync(r.TechnicianId);
+    if(t.Status=="Pending Approval")return Results.Conflict(new{message="Supervisor approval is required before assignment."});
     if(tech is null||!tech.IsActive)return Results.BadRequest(new{message="Technician not active."});
     if(t.RequiresHvAuthorization && (!tech.HvAuthorized || tech.HvAuthorizationValidUntil<DateTime.UtcNow))return Results.Conflict(new{message="Task requires active HV authorization."});
     t.AssignedToTechnicianId=tech.Id;t.AssignedTo=tech.Name;if(t.Status=="Not Started")t.Status="Assigned";t.UpdatedAt=DateTime.UtcNow;
     Audit(db,"ASSIGN","Task",t.Id,$"{t.TaskCode}->{tech.Name}");await db.SaveChangesAsync();return Results.Ok(t);
+});
+
+app.MapPost("/api/tasks/{id:guid}/approve", async (Guid id, WorkApprovalRequest r, AppDbContext db) =>
+{
+    var t=await db.WorkItems.FindAsync(id);if(t is null)return Results.NotFound();
+    if(t.WorkType!="Additional Work"||t.Status!="Pending Approval")return Results.Conflict(new{message="Only pending additional work can be approved."});
+    t.Status="Not Started";t.UpdatedAt=DateTime.UtcNow;
+    db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=t.JobCardId,WorkItemId=t.Id,EntryType="Additional Work Approved",Comment=r.Remarks,CreatedBy=r.ApprovedBy,CreatedRole="Supervisor"});
+    Audit(db,"APPROVE","Task",t.Id,$"{t.TaskCode}: {r.Remarks}",r.ApprovedBy);await db.SaveChangesAsync();return Results.Ok(t);
 });
 
 app.MapPost("/api/job-cards/{id:guid}/work-items", async (Guid id, WorkItemRequest r, AppDbContext db) =>
@@ -1759,11 +1790,77 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}/execution",async(Guid jobCar
 {
     var items=await db.WorkItems.AsNoTracking().Where(x=>x.JobCardId==jobCardId).OrderBy(x=>x.TaskCode).ToListAsync();var ids=items.Select(x=>x.Id).ToList();
     var inst=await db.WorkTemplateInstances.AsNoTracking().Where(x=>x.JobCardId==jobCardId).ToListAsync();var instIds=inst.Select(x=>x.Id).ToList();
-    var fields=await db.WorkTemplateFieldInstances.AsNoTracking().Where(x=>instIds.Contains(x.WorkTemplateInstanceId)).OrderBy(x=>x.Sequence).ToListAsync();var fieldIds=fields.Select(x=>x.Id).ToList();var issueIds=await db.Defects.AsNoTracking().Where(x=>x.ChecklistFieldInstanceId.HasValue&&fieldIds.Contains(x.ChecklistFieldInstanceId.Value)&&x.Disposition!="Closed").Select(x=>x.ChecklistFieldInstanceId!.Value).ToListAsync();
+    var fields=await db.WorkTemplateFieldInstances.AsNoTracking().Where(x=>instIds.Contains(x.WorkTemplateInstanceId)).OrderBy(x=>x.Sequence).ToListAsync();var fieldIds=fields.Select(x=>x.Id).ToList();var defects=await db.Defects.AsNoTracking().Where(x=>x.JobCardId==jobCardId).ToListAsync();var issueIds=defects.Where(x=>x.ChecklistFieldInstanceId.HasValue&&fieldIds.Contains(x.ChecklistFieldInstanceId.Value)&&x.Disposition!="Closed").Select(x=>x.ChecklistFieldInstanceId!.Value).ToList();
     var sections=inst.Select(i=>{var wi=items.FirstOrDefault(x=>x.Id==i.WorkItemId);var fs=fields.Where(f=>f.WorkTemplateInstanceId==i.Id).Select(f=>new{f.Id,f.Sequence,f.FieldCode,f.Label,f.FieldType,f.ActionCode,f.Specification,f.Severity,f.UnitCode,f.IsMandatory,f.MinValue,f.MaxValue,f.Options,f.FailureAction,f.SuggestedIssueCode,f.Value,f.Result,f.Remarks,f.EvidenceReference,f.ExecutedAt,f.ExecutedBy,issueRecorded=issueIds.Contains(f.Id)});return new{workItemId=i.WorkItemId,taskCode=wi?.TaskCode??"",workType=wi?.WorkType??"",description=wi?.Description??"",name=i.TemplateName,status=wi?.Status??i.Status,completed=fs.Count(x=>x.Result!="Pending"&&x.Value!=""),total=fs.Count(),fields=fs};});
-    var corrective=items.Where(x=>x.WorkType=="Corrective Repair").Select(x=>new{x.Id,x.TaskCode,x.Description,x.Status,x.Priority,x.DependencyTaskId});return Results.Ok(new{sections,corrective});
+    var corrective=items.Where(x=>x.WorkType=="Corrective Repair").Select(x=>{var d=defects.FirstOrDefault(z=>z.CorrectiveWorkItemId==x.Id);var f=d?.ChecklistFieldInstanceId is Guid fieldKey?fields.FirstOrDefault(z=>z.Id==fieldKey):null;return new{x.Id,x.TaskCode,x.Description,x.Status,x.Priority,x.DependencyTaskId,x.AssignedToTechnicianId,x.AssignedTo,x.ActualHours,x.CompletionRemarks,defectId=d?.Id,originFieldId=d?.ChecklistFieldInstanceId,originCode=f?.FieldCode??"",originLabel=f?.Label??"",issue=d?.Description??"",severity=d?.Severity??""};});return Results.Ok(new{sections,corrective});
 });
 app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck-pass",async(Guid workItemId,Guid fieldId,AppDbContext db)=>{var d=await db.Defects.FirstOrDefaultAsync(x=>x.ChecklistFieldInstanceId==fieldId&&x.Disposition!="Closed");if(d is null)return Results.NotFound(new{message="No open issue found."});if(d.CorrectiveWorkItemId.HasValue){var c=await db.WorkItems.FindAsync(d.CorrectiveWorkItemId.Value);if(c!=null&&c.Status!="Completed")return Results.Conflict(new{message="Complete the corrective work before recheck."});}d.Disposition="Closed";d.ClosedAt=DateTime.UtcNow;var f=await db.WorkTemplateFieldInstances.FindAsync(fieldId);if(f!=null){f.Result="Pass";f.Value=f.FieldType=="OK/Not OK"?"OK":"Pass";f.ExecutedAt=DateTime.UtcNow;}await db.SaveChangesAsync();return Results.Ok();});
+
+app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck",async(Guid workItemId,Guid fieldId,RecheckRequest r,AppDbContext db)=>
+{
+    var d=await db.Defects.FirstOrDefaultAsync(x=>x.ChecklistFieldInstanceId==fieldId&&x.Disposition!="Closed");
+    if(d is null)return Results.NotFound(new{message="No open issue found."});
+    if(d.CorrectiveWorkItemId.HasValue){var c=await db.WorkItems.FindAsync(d.CorrectiveWorkItemId.Value);if(c!=null&&c.Status!="Completed")return Results.Conflict(new{message="Complete the corrective work before recheck."});}
+    var f=await db.WorkTemplateFieldInstances.FindAsync(fieldId);if(f is null)return Results.NotFound(new{message="Checkpoint not found."});
+    var passed=string.Equals(r.Result,"Pass",StringComparison.OrdinalIgnoreCase)||string.Equals(r.Result,"OK",StringComparison.OrdinalIgnoreCase);
+    f.Result=passed?"Pass":"Fail";f.Value=f.FieldType=="OK/Not OK"?(passed?"OK":"Not OK"):(passed?"Pass":"Fail");
+    f.Remarks=string.IsNullOrWhiteSpace(r.Remarks)?f.Remarks:r.Remarks;f.ExecutedAt=DateTime.UtcNow;f.ExecutedBy=r.RecheckedBy;
+    if(passed){d.Disposition="Closed";d.ClosedAt=DateTime.UtcNow;}
+    db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=d.JobCardId,WorkItemId=workItemId,ChecklistFieldInstanceId=fieldId,EntryType="Recheck",Comment=$"{f.FieldCode} {r.Result}: {r.Remarks}",CreatedBy=r.RecheckedBy,CreatedRole=r.RecheckedRole});
+    Audit(db,"RECHECK","Checkpoint",fieldId,$"{f.FieldCode}:{r.Result}; {r.Remarks}",r.RecheckedBy);await db.SaveChangesAsync();return Results.Ok(new{passed,status=passed?"Closed":"Open"});
+});
+
+app.MapGet("/api/work-orders/{jobCardId:guid}/work-log",async(Guid jobCardId,AppDbContext db)=
+    Results.Ok(await db.WorkLogEntries.AsNoTracking().Where(x=>x.JobCardId==jobCardId).OrderByDescending(x=>x.CreatedAt).ToListAsync()));
+
+app.MapPost("/api/work-orders/{jobCardId:guid}/work-log",async(Guid jobCardId,WorkLogCreate r,AppDbContext db)=>
+{
+    if(!await db.JobCards.AnyAsync(x=>x.Id==jobCardId))return Results.NotFound();
+    if(string.IsNullOrWhiteSpace(r.Comment))return Results.BadRequest(new{message="Enter a work note or comment."});
+    if(r.WorkItemId.HasValue&&!await db.WorkItems.AnyAsync(x=>x.Id==r.WorkItemId.Value&&x.JobCardId==jobCardId))return Results.BadRequest(new{message="Task does not belong to this Work Order."});
+    var x=new WorkLogEntry{JobCardId=jobCardId,WorkItemId=r.WorkItemId,ChecklistFieldInstanceId=r.ChecklistFieldInstanceId,EntryType=string.IsNullOrWhiteSpace(r.EntryType)?"Work Note":r.EntryType.Trim(),Comment=r.Comment.Trim(),CreatedBy=r.CreatedBy,CreatedRole=r.CreatedRole};
+    db.WorkLogEntries.Add(x);Audit(db,"NOTE","WorkOrder",jobCardId,$"{x.EntryType}: {x.Comment}",x.CreatedBy);await db.SaveChangesAsync();return Results.Ok(x);
+});
+
+app.MapPost("/api/work-orders/{jobCardId:guid}/additional-work",async(Guid jobCardId,AdditionalWorkCreate r,AppDbContext db)=>
+{
+    if(!await db.JobCards.AnyAsync(x=>x.Id==jobCardId))return Results.NotFound();
+    if(string.IsNullOrWhiteSpace(r.Description)||string.IsNullOrWhiteSpace(r.Reason))return Results.BadRequest(new{message="Work description and reason are required."});
+    Technician? tech=null;if(r.TechnicianId.HasValue){tech=await db.Technicians.FindAsync(r.TechnicianId.Value);if(tech is null||!tech.IsActive)return Results.BadRequest(new{message="Select an active technician."});}
+    var addedByTechnician=string.Equals(r.CreatedRole,"Technician",StringComparison.OrdinalIgnoreCase);
+    var task=new WorkItem{JobCardId=jobCardId,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMdd}-{(await db.WorkItems.CountAsync()+1):D5}",WorkType="Additional Work",Description=r.Description.Trim(),Status=addedByTechnician?"Pending Approval":tech is null?"Not Started":"Assigned",AssignedToTechnicianId=addedByTechnician?null:tech?.Id,AssignedTo=addedByTechnician?"":tech?.Name??"",Priority=string.IsNullOrWhiteSpace(r.Priority)?"P3":r.Priority,EstimatedHours=r.EstimatedHours,RequiresQc=r.RequiresQc,UpdatedAt=DateTime.UtcNow};
+    db.WorkItems.Add(task);
+    db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=jobCardId,WorkItemId=task.Id,EntryType="Additional Work Added",Comment=$"{r.Description.Trim()} · Reason: {r.Reason.Trim()}",CreatedBy=r.CreatedBy,CreatedRole=r.CreatedRole});
+    Audit(db,"CREATE","AdditionalWork",task.Id,$"{task.Description}; reason={r.Reason}",r.CreatedBy);await db.SaveChangesAsync();return Results.Ok(task);
+});
+
+app.MapGet("/api/work-orders/{jobCardId:guid}/evidence",async(Guid jobCardId,AppDbContext db)=>
+{
+    var rows=await db.WorkEvidence.AsNoTracking().Where(x=>x.JobCardId==jobCardId).OrderByDescending(x=>x.UploadedAt)
+        .Select(x=>new{x.Id,x.JobCardId,x.WorkItemId,x.ChecklistFieldInstanceId,x.WorkLogEntryId,x.Stage,x.FileName,x.ContentType,x.FileSize,x.Caption,x.UploadedBy,x.UploadedAt,url=$"/api/work-evidence/{x.Id}/content"}).ToListAsync();
+    return Results.Ok(rows);
+});
+
+app.MapPost("/api/work-orders/{jobCardId:guid}/evidence",async(Guid jobCardId,HttpRequest request,AppDbContext db)=>
+{
+    if(!request.HasFormContentType)return Results.BadRequest(new{message="Upload a photo or video file."});
+    if(!await db.JobCards.AnyAsync(x=>x.Id==jobCardId))return Results.NotFound();
+    var form=await request.ReadFormAsync();var file=form.Files.FirstOrDefault();if(file is null||file.Length==0)return Results.BadRequest(new{message="Choose a file to upload."});
+    const long maxBytes=25L*1024*1024;if(file.Length>maxBytes)return Results.BadRequest(new{message="Evidence files must be 25 MB or smaller."});
+    var allowed=file.ContentType.StartsWith("image/",StringComparison.OrdinalIgnoreCase)||file.ContentType.StartsWith("video/",StringComparison.OrdinalIgnoreCase)||file.ContentType=="application/pdf";
+    if(!allowed)return Results.BadRequest(new{message="Only images, short videos and PDF files are supported."});
+    Guid? workItemId=Guid.TryParse(form["workItemId"].FirstOrDefault(),out var wi)?wi:null;Guid? fieldId=Guid.TryParse(form["checklistFieldInstanceId"].FirstOrDefault(),out var fi)?fi:null;Guid? logId=Guid.TryParse(form["workLogEntryId"].FirstOrDefault(),out var li)?li:null;
+    if(workItemId.HasValue&&!await db.WorkItems.AnyAsync(x=>x.Id==workItemId.Value&&x.JobCardId==jobCardId))return Results.BadRequest(new{message="Task does not belong to this Work Order."});
+    await using var input=file.OpenReadStream();using var buffer=new MemoryStream();await input.CopyToAsync(buffer);
+    var x=new WorkEvidence{JobCardId=jobCardId,WorkItemId=workItemId,ChecklistFieldInstanceId=fieldId,WorkLogEntryId=logId,Stage=form["stage"].FirstOrDefault()??"General",FileName=Path.GetFileName(file.FileName),ContentType=file.ContentType,FileSize=file.Length,Content=buffer.ToArray(),Caption=form["caption"].FirstOrDefault()??"",UploadedBy=form["uploadedBy"].FirstOrDefault()??"Service User"};
+    db.WorkEvidence.Add(x);db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=jobCardId,WorkItemId=workItemId,ChecklistFieldInstanceId=fieldId,EntryType="Evidence Added",Comment=$"{x.Stage}: {x.FileName}",CreatedBy=x.UploadedBy,CreatedRole=form["uploadedRole"].FirstOrDefault()??"Technician"});
+    Audit(db,"UPLOAD","WorkEvidence",x.Id,$"{x.Stage}:{x.FileName}",x.UploadedBy);await db.SaveChangesAsync();return Results.Ok(new{x.Id,x.FileName,x.ContentType,x.Stage,url=$"/api/work-evidence/{x.Id}/content"});
+}).DisableAntiforgery();
+
+app.MapGet("/api/work-evidence/{id:guid}/content",async(Guid id,AppDbContext db)=>
+{
+    var x=await db.WorkEvidence.AsNoTracking().FirstOrDefaultAsync(e=>e.Id==id);return x is null?Results.NotFound():Results.File(x.Content,x.ContentType,x.FileName,enableRangeProcessing:true);
+});
 
 app.MapGet("/api/parts/master", async (AppDbContext db) => Results.Ok(await db.PartMasters.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.PartNumber).ToListAsync()));
 app.MapPost("/api/parts/master", async (PartMasterRequest r, AppDbContext db) =>
@@ -2348,6 +2445,10 @@ record TaskRequest(Guid JobCardId,string WorkType,string Description,Guid? Assig
     Guid? DependencyTaskId,decimal? EstimatedHours,bool RequiresQc,bool RequiresHvAuthorization);
 record TaskStatusRequest(string Status,decimal? ActualHours,string? CompletionRemarks,string? EvidenceReference);
 record TaskAssignRequest(Guid TechnicianId);
+record WorkApprovalRequest(string ApprovedBy,string Remarks);
+record WorkLogCreate(Guid? WorkItemId,Guid? ChecklistFieldInstanceId,string EntryType,string Comment,string CreatedBy,string CreatedRole);
+record AdditionalWorkCreate(string Description,string Reason,Guid? TechnicianId,decimal? EstimatedHours,string Priority,bool RequiresQc,string CreatedBy,string CreatedRole);
+record RecheckRequest(string Result,string Remarks,string RecheckedBy,string RecheckedRole);
 
 record PartMasterRequest(string PartNumber,string Description,string Category,string UnitOfMeasure,string ManufacturerPartNumber,bool IsSerialized,bool IsWarrantyReturnable,decimal ReorderLevel,decimal ReorderQuantity,decimal StandardCost);
 record StockMovementRequest(Guid PartMasterId,Guid InventoryLocationId,decimal Quantity,string User);
