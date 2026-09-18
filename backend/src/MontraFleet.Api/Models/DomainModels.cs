@@ -800,6 +800,9 @@ public class MaintenanceRequest
     public string SourceType { get; set; } = "Manual";
     public string SourceReference { get; set; } = string.Empty;
     public string RequestType { get; set; } = "Repair";
+    public string ComplaintCategoryCode { get; set; } = "GENERAL";
+    public string SymptomCode { get; set; } = "OTHER";
+    public string DiagnosticTemplateCode { get; set; } = "DIAG-GENERAL";
     public string Priority { get; set; } = "P3";
     public string Description { get; set; } = string.Empty;
     public string Status { get; set; } = "Open";
