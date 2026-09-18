@@ -1526,6 +1526,29 @@ app.MapPut("/api/appointments/{id:guid}/status", async (Guid id, StatusRequest r
     a.Status=r.Status; Audit(db,"STATUS","Appointment",a.Id,r.Status); await db.SaveChangesAsync(); return Results.Ok(a);
 });
 
+async Task AddDiagnosticWorkAsync(AppDbContext db,JobCard jc,MaintenanceRequest mr,string priority)
+{
+    var code=string.IsNullOrWhiteSpace(mr.DiagnosticTemplateCode)?"DIAG-GENERAL":mr.DiagnosticTemplateCode;
+    var wt=await db.WorkTemplates.FirstOrDefaultAsync(x=>x.TemplateCode==code&&x.IsActive)
+           ?? await db.WorkTemplates.FirstOrDefaultAsync(x=>x.TemplateCode=="DIAG-GENERAL"&&x.IsActive);
+    var wi=new WorkItem{JobCardId=jc.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid().ToString("N")[..4]}",
+        WorkType="Diagnostic",Description=$"{mr.RequestNumber} · {mr.Description}",Status="Not Started",Priority=priority,
+        EstimatedHours=wt?.StandardHours??0.5m,StandardRepairHours=wt?.StandardHours??0.5m,RequiresQc=true,RequiresHvAuthorization=wt?.RequiresHvAuthorization??false,UpdatedAt=DateTime.UtcNow};
+    db.WorkItems.Add(wi);
+    if(wt!=null)
+    {
+        var inst=new WorkTemplateInstance{JobCardId=jc.Id,WorkItemId=wi.Id,WorkTemplateId=wt.Id,TemplateCode=wt.TemplateCode,TemplateName=wt.Name,TemplateVersion=wt.Version};
+        db.WorkTemplateInstances.Add(inst);
+        var fields=await db.WorkTemplateFields.AsNoTracking().Where(x=>x.WorkTemplateId==wt.Id).OrderBy(x=>x.Sequence).ToListAsync();
+        foreach(var field in fields)
+            db.WorkTemplateFieldInstances.Add(new WorkTemplateFieldInstance{WorkTemplateInstanceId=inst.Id,SourceTemplateFieldId=field.Id,SectionName=field.SectionName,Sequence=field.Sequence,
+                FieldCode=field.FieldCode,Label=field.Label,FieldType=field.FieldType,UnitCode=field.UnitCode,IsMandatory=field.IsMandatory,MinValue=field.MinValue,MaxValue=field.MaxValue,
+                Options=field.Options,FailureAction=field.FailureAction,SuggestedIssueCode=field.SuggestedIssueCode});
+    }
+    mr.JobCardId=jc.Id;
+    mr.Status="Converted";
+}
+
 app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbContext db) =>
 {
     var a=await db.Appointments.FindAsync(id); if(a is null)return Results.NotFound();
@@ -1573,6 +1596,10 @@ app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbCo
             }
         }
     }
+    var linkedRequests=await db.MaintenanceRequests.Where(x=>x.VehicleId==v.Id && x.Status!="Cancelled" && x.Status!="Converted" &&
+        ((a.SourceType=="Maintenance Request" && x.Id.ToString()==a.SourceReference) || (a.PmObligationId.HasValue && (x.Status=="Open"||x.Status=="Vehicle Arrived")))).OrderBy(x=>x.RequestedAt).ToListAsync();
+    foreach(var mr in linkedRequests) await AddDiagnosticWorkAsync(db,jc,mr,a.Priority);
+
     db.VehicleAvailabilityLedger.Add(new VehicleAvailabilityLedger{VehicleId=v.Id,State="Under Maintenance",StartAt=DateTime.UtcNow,
         ReasonCode=a.AppointmentType,SourceType="ServiceEvent",SourceServiceEventId=e.Id});
     if(a.PmObligationId.HasValue){var p=await db.PmObligations.FindAsync(a.PmObligationId.Value);if(p!=null)p.Status="In Service";}
@@ -2111,6 +2138,14 @@ app.MapGet("/api/quality", async (AppDbContext db)=>
 
 
 // ---------------- v1.5 Functional Fleet Maintenance Baseline ----------------
+app.MapGet("/api/maintenance-requests/config", async (AppDbContext db) =>
+{
+    var categories=await db.MasterOptions.AsNoTracking().Where(x=>x.Category=="COMPLAINT_CATEGORY"&&x.IsActive).OrderBy(x=>x.SortOrder).Select(x=>new{x.Code,x.Name,templateCode=x.Value,x.Description}).ToListAsync();
+    var symptoms=await db.MasterOptions.AsNoTracking().Where(x=>x.Category=="SYMPTOM"&&x.IsActive).OrderBy(x=>x.SortOrder).Select(x=>new{x.Code,x.Name,x.Description}).ToListAsync();
+    var centres=await db.ServiceCentreMasters.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.Name).Select(x=>new{x.Id,x.CentreCode,x.Name,x.City,x.State,x.BayCount}).ToListAsync();
+    return Results.Ok(new{categories,symptoms,centres});
+});
+
 app.MapGet("/api/maintenance-requests", async (string? status, Guid? vehicleId, AppDbContext db) =>
 {
     var q=db.MaintenanceRequests.AsNoTracking().AsQueryable();
@@ -2118,15 +2153,19 @@ app.MapGet("/api/maintenance-requests", async (string? status, Guid? vehicleId, 
     if(vehicleId.HasValue)q=q.Where(x=>x.VehicleId==vehicleId.Value);
     var rows=await (from r in q join v in db.Vehicles.AsNoTracking() on r.VehicleId equals v.Id
         orderby r.RequestedAt descending select new{r.Id,r.RequestNumber,r.VehicleId,vehicle=v.RegistrationNumber,r.SourceType,r.SourceReference,
-        r.RequestType,r.Priority,r.Description,r.Status,r.RequestedBy,r.RequestedAt,r.TargetDate,r.JobCardId}).ToListAsync();
+        r.RequestType,r.ComplaintCategoryCode,r.SymptomCode,r.DiagnosticTemplateCode,r.Priority,r.Description,r.Status,r.RequestedBy,r.RequestedAt,r.TargetDate,r.JobCardId}).ToListAsync();
     return Results.Ok(rows);
 });
 app.MapPost("/api/maintenance-requests", async (MaintenanceRequestCreate r, AppDbContext db) =>
 {
     if(!await db.Vehicles.AnyAsync(x=>x.Id==r.VehicleId))return Results.BadRequest(new{message="Vehicle not found."});
+    var category=(r.ComplaintCategoryCode??"GENERAL").Trim().ToUpperInvariant();
+    var mapping=await db.MasterOptions.AsNoTracking().FirstOrDefaultAsync(x=>x.Category=="COMPLAINT_CATEGORY"&&x.Code==category&&x.IsActive);
+    var templateCode=string.IsNullOrWhiteSpace(mapping?.Value)?"DIAG-GENERAL":mapping!.Value;
     var mr=new MaintenanceRequest{RequestNumber=$"MR-{DateTime.UtcNow:yyyyMMdd}-{(await db.MaintenanceRequests.CountAsync()+1):D5}",VehicleId=r.VehicleId,
-        SourceType=r.SourceType,SourceReference=r.SourceReference,RequestType=r.RequestType,Priority=r.Priority,Description=r.Description,
-        Status="Open",RequestedBy=r.RequestedBy,RequestedAt=DateTime.UtcNow,TargetDate=r.TargetDate};
+        SourceType=r.SourceType,SourceReference=r.SourceReference,RequestType=r.RequestType,ComplaintCategoryCode=category,
+        SymptomCode=string.IsNullOrWhiteSpace(r.SymptomCode)?"OTHER":r.SymptomCode.Trim().ToUpperInvariant(),DiagnosticTemplateCode=templateCode,
+        Priority=r.Priority,Description=r.Description,Status="Open",RequestedBy=r.RequestedBy,RequestedAt=DateTime.UtcNow,TargetDate=r.TargetDate};
     db.MaintenanceRequests.Add(mr);Audit(db,"CREATE","MaintenanceRequest",mr.Id,$"{mr.RequestNumber}:{mr.Description}",r.RequestedBy);await db.SaveChangesAsync();return Results.Created($"/api/maintenance-requests/{mr.Id}",mr);
 });
 app.MapPut("/api/maintenance-requests/{id:guid}/status", async (Guid id,StatusRequest r,AppDbContext db)=>{var x=await db.MaintenanceRequests.FindAsync(id);if(x is null)return Results.NotFound();x.Status=r.Status;Audit(db,"STATUS","MaintenanceRequest",x.Id,r.Status);await db.SaveChangesAsync();return Results.Ok(x);});
@@ -2271,7 +2310,7 @@ record PartRequestCreate(Guid JobCardId,Guid? WorkItemId,Guid PartMasterId,Guid 
 record QuantityAction(decimal Quantity,string User);
 
 
-record MaintenanceRequestCreate(Guid VehicleId,string SourceType,string SourceReference,string RequestType,string Priority,string Description,string RequestedBy,DateTime? TargetDate);
+record MaintenanceRequestCreate(Guid VehicleId,string SourceType,string SourceReference,string RequestType,string ComplaintCategoryCode,string SymptomCode,string Priority,string Description,string RequestedBy,DateTime? TargetDate);
 record CreateWorkOrderRequest(Guid[] RequestIds,string Priority,string Bay,Guid? TechnicianId,string Technician,string CreatedBy);
 record ServiceTaskMasterCreate(string TaskCode,string Name,string Category,string Description,decimal StandardHours,string RequiredSkillCode,bool RequiresHvAuthorization,bool RequiresQc,string ChecklistCode);
 record StandardPartCreate(Guid PartMasterId,decimal Quantity);
