@@ -128,6 +128,9 @@ using (var scope = app.Services.CreateScope())
           "RequestedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, "TargetDate" timestamptz NULL, "JobCardId" uuid NULL);
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenanceRequests_RequestNumber" ON "MaintenanceRequests" ("RequestNumber");
         CREATE INDEX IF NOT EXISTS "IX_MaintenanceRequests_Vehicle_Status" ON "MaintenanceRequests" ("VehicleId","Status");
+        ALTER TABLE "MaintenanceRequests" ADD COLUMN IF NOT EXISTS "ComplaintCategoryCode" text NOT NULL DEFAULT 'GENERAL';
+        ALTER TABLE "MaintenanceRequests" ADD COLUMN IF NOT EXISTS "SymptomCode" text NOT NULL DEFAULT 'OTHER';
+        ALTER TABLE "MaintenanceRequests" ADD COLUMN IF NOT EXISTS "DiagnosticTemplateCode" text NOT NULL DEFAULT 'DIAG-GENERAL';
 
         CREATE TABLE IF NOT EXISTS "ServiceTaskMasters" (
           "Id" uuid PRIMARY KEY, "TaskCode" text NOT NULL, "Name" text NOT NULL, "Category" text NOT NULL DEFAULT '', "Description" text NOT NULL DEFAULT '',
@@ -394,11 +397,126 @@ using (var scope = app.Services.CreateScope())
         new MasterOption{Category="ISSUE_TYPE",Code="HV-ISO",Name="HV isolation failed",Value="Critical",Description="Stop work and perform HV diagnosis",SortOrder=60},
         new MasterOption{Category="ISSUE_TYPE",Code="BATT-TEMP",Name="Battery abnormal temperature",Value="Major",Description="Perform battery diagnostic",SortOrder=70},
         new MasterOption{Category="ISSUE_TYPE",Code="CONN-LOOSE",Name="Electrical connector loose",Value="Minor",Description="Secure or repair connector",SortOrder=80},
-        new MasterOption{Category="ISSUE_TYPE",Code="OTHER",Name="Other issue",Value="Minor",Description="Assess and define corrective work",SortOrder=90}
+        new MasterOption{Category="ISSUE_TYPE",Code="OTHER",Name="Other issue",Value="Minor",Description="Assess and define corrective work",SortOrder=90},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="FLUID_LEAK",Name="Oil / Fluid Leakage",Value="DIAG-LEAK",Description="Oil, coolant, hydraulic or other fluid leakage",SortOrder=10},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="BRAKE",Name="Brake Complaint",Value="DIAG-BRAKE",Description="Braking performance, noise, warning or leakage",SortOrder=20},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="CHARGING",Name="Charging Issue",Value="DIAG-CHARGING",Description="Charging failure, slow charging or connector issue",SortOrder=30},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="NO_START",Name="Vehicle Not Starting",Value="DIAG-NOSTART",Description="Vehicle will not power on or move",SortOrder=40},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="BATTERY_HV",Name="Battery / HV Warning",Value="DIAG-HV",Description="HV battery warning, isolation or thermal concern",SortOrder=50},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="STEERING",Name="Steering Complaint",Value="DIAG-STEER",Description="Steering effort, play, pull or vibration",SortOrder=60},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="NOISE_VIB",Name="Abnormal Noise / Vibration",Value="DIAG-NOISE",Description="Noise or vibration requiring diagnosis",SortOrder=70},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="TYRE_WHEEL",Name="Tyre / Wheel Complaint",Value="DIAG-TYRE",Description="Tyre pressure, damage, wear, wheel concern",SortOrder=80},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="GENERAL",Name="Other / General",Value="DIAG-GENERAL",Description="General diagnosis when no specific template applies",SortOrder=90},
+        new MasterOption{Category="SYMPTOM",Code="LEAKAGE",Name="Leakage",Value="Leakage",Description="Visible or suspected fluid leakage",SortOrder=10},
+        new MasterOption{Category="SYMPTOM",Code="NOISE",Name="Noise",Value="Noise",Description="Abnormal sound",SortOrder=20},
+        new MasterOption{Category="SYMPTOM",Code="WARNING",Name="Warning Lamp / DTC",Value="Warning",Description="Warning lamp, fault or DTC",SortOrder=30},
+        new MasterOption{Category="SYMPTOM",Code="LOW_PERFORMANCE",Name="Low Performance",Value="Performance",Description="Reduced performance or efficiency",SortOrder=40},
+        new MasterOption{Category="SYMPTOM",Code="NO_START",Name="Not Starting",Value="No start",Description="Vehicle does not power on/start",SortOrder=50},
+        new MasterOption{Category="SYMPTOM",Code="OVERHEAT",Name="Overheating",Value="Overheating",Description="Abnormal thermal condition",SortOrder=60},
+        new MasterOption{Category="SYMPTOM",Code="VIBRATION",Name="Vibration",Value="Vibration",Description="Abnormal vibration",SortOrder=70},
+        new MasterOption{Category="SYMPTOM",Code="OTHER",Name="Other",Value="Other",Description="Other symptom",SortOrder=90}
     };
     foreach(var o in seedOptions)
         if(!await db.MasterOptions.AnyAsync(x=>x.Category==o.Category&&x.Code==o.Code)) db.MasterOptions.Add(o);
     await db.SaveChangesAsync();
+
+    async Task<WorkTemplate> EnsureDiagnosticTemplate(string code,string name,string description,params (string code,string label,string type,string options,string failAction)[] fields)
+    {
+        var wt=await db.WorkTemplates.FirstOrDefaultAsync(x=>x.TemplateCode==code);
+        if(wt is null)
+        {
+            wt=new WorkTemplate{TemplateCode=code,Name=name,Category="Diagnostic",Description=description,Version=1,StandardHours=0.5m,RequiredSkillCode="DIAG",RequiresQc=true,IsActive=true};
+            db.WorkTemplates.Add(wt);await db.SaveChangesAsync();
+        }
+        var seq=0;
+        foreach(var item in fields)
+        {
+            seq+=10;
+            if(!await db.WorkTemplateFields.AnyAsync(x=>x.WorkTemplateId==wt.Id&&x.FieldCode==item.code))
+                db.WorkTemplateFields.Add(new WorkTemplateField{WorkTemplateId=wt.Id,SectionName=name,Sequence=seq,FieldCode=item.code,Label=item.label,FieldType=item.type,Options=item.options,IsMandatory=true,FailureAction=item.failAction});
+        }
+        await db.SaveChangesAsync();
+        return wt;
+    }
+
+    await EnsureDiagnosticTemplate("DIAG-GENERAL","General Diagnosis","Fallback diagnostic checklist for any unplanned repair or breakdown",
+        ("GD-01","Confirm customer / driver complaint","OK/Not OK","OK;Not OK","None"),
+        ("GD-02","Record warning lamps / DTC / dashboard indication","Text","","None"),
+        ("GD-03","Visual vehicle condition and safety check","OK/Not OK","OK;Not OK","Create Defect"),
+        ("GD-04","Inspect for visible fluid leakage","OK/Not OK","OK;Not OK","Create Defect"),
+        ("GD-05","Diagnosis / finding","Text","","None"),
+        ("GD-06","Recommended corrective action","Text","","None"),
+        ("GD-07","Parts required?","Yes/No","Yes;No","None"),
+        ("GD-08","Photo / evidence reference","Photo","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-LEAK","Oil / Fluid Leak Diagnosis","Structured leak diagnosis for oil, coolant, hydraulic and other fluid complaints",
+        ("LK-01","Confirm leakage complaint","OK/Not OK","OK;Not OK","None"),
+        ("LK-02","Identify fluid / leak source","Text","","None"),
+        ("LK-03","Check fluid level / loss severity","Text","","None"),
+        ("LK-04","Inspect hose / pipe / seal / gasket condition","OK/Not OK","OK;Not OK","Create Defect"),
+        ("LK-05","Inspect joints, clamps and connections","OK/Not OK","OK;Not OK","Create Defect"),
+        ("LK-06","Check contamination / spread area","Text","","None"),
+        ("LK-07","Recommended repair","Text","","None"),
+        ("LK-08","Photo / evidence reference","Photo","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-BRAKE","Brake Diagnosis","Brake complaint diagnostic checklist",
+        ("BRD-01","Confirm brake complaint","OK/Not OK","OK;Not OK","None"),
+        ("BRD-02","Check warning lamp / DTC","Text","","None"),
+        ("BRD-03","Inspect pads / shoes / discs / drums","OK/Not OK","OK;Not OK","Create Defect"),
+        ("BRD-04","Inspect brake lines / hoses for leakage or damage","OK/Not OK","OK;Not OK","Create Defect"),
+        ("BRD-05","Check pedal / parking brake operation","OK/Not OK","OK;Not OK","Create Defect"),
+        ("BRD-06","Functional brake test finding","Text","","None"),
+        ("BRD-07","Recommended repair","Text","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-CHARGING","Charging System Diagnosis","Charging system complaint diagnostic checklist",
+        ("CHD-01","Confirm charging complaint","OK/Not OK","OK;Not OK","None"),
+        ("CHD-02","Inspect charge inlet and connector","OK/Not OK","OK;Not OK","Create Defect"),
+        ("CHD-03","Check connector pins / locking","OK/Not OK","OK;Not OK","Create Defect"),
+        ("CHD-04","Record charger / vehicle DTC","Text","","None"),
+        ("CHD-05","Charging communication result","Text","","None"),
+        ("CHD-06","Charging functional test","Pass/Fail","Pass;Fail","Create Defect"),
+        ("CHD-07","Check overheating / burning signs","OK/Not OK","OK;Not OK","Block Completion"));
+
+    await EnsureDiagnosticTemplate("DIAG-NOSTART","No-Start Diagnosis","Vehicle does not power on, start or move",
+        ("NS-01","Confirm no-start condition","OK/Not OK","OK;Not OK","None"),
+        ("NS-02","Check 12 V supply / terminals","OK/Not OK","OK;Not OK","Create Defect"),
+        ("NS-03","Check HV ready indication / interlock","OK/Not OK","OK;Not OK","Create Defect"),
+        ("NS-04","Record warning lamp / DTC","Text","","None"),
+        ("NS-05","Check key / start enable / safety interlocks","OK/Not OK","OK;Not OK","Create Defect"),
+        ("NS-06","Diagnosis / recommended action","Text","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-HV","Battery / HV Diagnosis","HV battery, isolation and thermal diagnostic checklist",
+        ("HV-01","Record battery warning / DTC","Text","","None"),
+        ("HV-02","Check SOC / battery status","Text","","None"),
+        ("HV-03","Check battery temperature / thermal warning","Text","","None"),
+        ("HV-04","Inspect HV cables / connectors","OK/Not OK","OK;Not OK","Create Defect"),
+        ("HV-05","Check isolation / insulation status","Pass/Fail","Pass;Fail","Block Completion"),
+        ("HV-06","Check coolant leakage / cooling condition","OK/Not OK","OK;Not OK","Create Defect"),
+        ("HV-07","Diagnosis / recommended action","Text","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-STEER","Steering Diagnosis","Steering effort, play, pull and vibration diagnosis",
+        ("ST-01","Confirm steering complaint","OK/Not OK","OK;Not OK","None"),
+        ("ST-02","Check steering free play / operation","OK/Not OK","OK;Not OK","Create Defect"),
+        ("ST-03","Inspect linkage / joints / mounting","OK/Not OK","OK;Not OK","Create Defect"),
+        ("ST-04","Inspect suspension components","OK/Not OK","OK;Not OK","Create Defect"),
+        ("ST-05","Check tyre pressure / uneven wear","OK/Not OK","OK;Not OK","Create Defect"),
+        ("ST-06","Road test / diagnosis finding","Text","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-NOISE","Noise / Vibration Diagnosis","Abnormal noise or vibration diagnostic checklist",
+        ("NV-01","Confirm complaint and operating condition","Text","","None"),
+        ("NV-02","Identify source area","Text","","None"),
+        ("NV-03","Inspect mounting / fasteners","OK/Not OK","OK;Not OK","Create Defect"),
+        ("NV-04","Inspect driveline / bearings / rotating parts","OK/Not OK","OK;Not OK","Create Defect"),
+        ("NV-05","Road / functional test finding","Text","","None"),
+        ("NV-06","Recommended action","Text","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-TYRE","Tyre / Wheel Diagnosis","Tyre, wheel, pressure, wear and alignment diagnosis",
+        ("TYD-01","Confirm tyre / wheel complaint","OK/Not OK","OK;Not OK","None"),
+        ("TYD-02","Check tyre pressure","Text","","None"),
+        ("TYD-03","Inspect tread / damage / sidewall","OK/Not OK","OK;Not OK","Create Defect"),
+        ("TYD-04","Inspect wheel / fasteners","OK/Not OK","OK;Not OK","Create Defect"),
+        ("TYD-05","Check abnormal / uneven wear","OK/Not OK","OK;Not OK","Create Defect"),
+        ("TYD-06","Alignment / vibration finding","Text","","None"));
 
     var montraTasks=new[]{
         new MaintenanceTaskDefinition{SectionName="Air / Brake System",TaskCode="BRK-01",TaskName="Brake lining / pad thickness",ActionCode="M",Specification="5–30 mm",Severity="Critical",UnitCode="mm",SuggestedIssueCode="BRK-PAD",SortOrder=10},
@@ -603,6 +721,17 @@ using (var scope = app.Services.CreateScope())
     var sol=await EnsureCentre("SOL-GGN","SOL Automotives",
         "Ground floor, khewat no 861, kherki daula, Jaipur Road, opp govt school main road nh 8, Kherki Daula","Gurugram","Haryana","122004","9891333888","RAJESHGULIA@SOLINDIA.NET");
     await EnsureCentreModels(sol,eviator,tractor27,tractor45);
+
+    foreach(var centre in new[]{anjana,sriram,sol})
+    {
+        for(var i=1;i<=3;i++)
+        {
+            var bayCode=$"Bay-{i:D2}";
+            if(!await db.ServiceBays.AnyAsync(x=>x.ServiceCentre==centre.CentreCode&&x.BayCode==bayCode))
+                db.ServiceBays.Add(new ServiceBay{ServiceCentre=centre.CentreCode,BayCode=bayCode,BayType="General",IsActive=true});
+        }
+    }
+    await db.SaveChangesAsync();
 
     if (!await db.InventoryLocations.AnyAsync())
     {
@@ -1352,10 +1481,12 @@ app.MapGet("/api/appointments", async (AppDbContext db) =>
     return Results.Ok(rows);
 });
 
-app.MapGet("/api/capacity", async (DateTime? date, AppDbContext db) =>
+app.MapGet("/api/capacity", async (DateTime? date, string? serviceCentre, AppDbContext db) =>
 {
     var d=(date ?? DateTime.UtcNow).Date; var next=d.AddDays(1);
-    var bays=await db.ServiceBays.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.BayCode).ToListAsync();
+    var bayQuery=db.ServiceBays.AsNoTracking().Where(x=>x.IsActive);
+    if(!string.IsNullOrWhiteSpace(serviceCentre)) bayQuery=bayQuery.Where(x=>x.ServiceCentre==serviceCentre);
+    var bays=await bayQuery.OrderBy(x=>x.BayCode).ToListAsync();
     var techs=await db.Technicians.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.Name).ToListAsync();
     var appts=await db.Appointments.AsNoTracking().Where(x=>x.StartAt>=d && x.StartAt<next && x.Status!="Cancelled" && x.Status!="No-show").ToListAsync();
     return Results.Ok(new {
@@ -1408,6 +1539,60 @@ app.MapPut("/api/appointments/{id:guid}/status", async (Guid id, StatusRequest r
     a.Status=r.Status; Audit(db,"STATUS","Appointment",a.Id,r.Status); await db.SaveChangesAsync(); return Results.Ok(a);
 });
 
+app.MapPost("/api/appointments/{id:guid}/check-in", async (Guid id, CheckInRequest r, AppDbContext db) =>
+{
+    var a=await db.Appointments.FindAsync(id); if(a is null)return Results.NotFound();
+    var v=await db.Vehicles.FindAsync(a.VehicleId); if(v is null)return Results.BadRequest(new{message="Vehicle not found."});
+    if(a.Status=="Cancelled"||a.Status=="Completed"||a.Status=="No-show")return Results.Conflict(new{message=$"Cannot check in a {a.Status} appointment."});
+    if(string.IsNullOrWhiteSpace(r.ServiceCentre)||string.IsNullOrWhiteSpace(r.Bay))return Results.BadRequest(new{message="Service centre and bay are required."});
+    var bayOk=await db.ServiceBays.AnyAsync(x=>x.IsActive&&x.ServiceCentre==r.ServiceCentre&&x.BayCode==r.Bay);
+    if(!bayOk)return Results.BadRequest(new{message="Selected bay does not belong to the selected service centre."});
+    a.ServiceCentre=r.ServiceCentre;a.Bay=r.Bay;a.Status="Checked-In";
+    if(!string.IsNullOrWhiteSpace(r.AdditionalComplaint))a.Reason=string.IsNullOrWhiteSpace(a.Reason)?r.AdditionalComplaint:$"{a.Reason}; {r.AdditionalComplaint}";
+    if(r.OdometerKm.HasValue&&r.OdometerKm.Value>=v.OdometerKm)v.OdometerKm=r.OdometerKm.Value;
+    if(r.OperatingHours.HasValue&&r.OperatingHours.Value>=v.OperatingHours)v.OperatingHours=r.OperatingHours.Value;
+    if(r.EnergyKwh.HasValue&&r.EnergyKwh.Value>=v.EnergyKwh)v.EnergyKwh=r.EnergyKwh.Value;
+    Audit(db,"CHECKIN","Appointment",a.Id,$"{v.RegistrationNumber} @ {r.ServiceCentre}/{r.Bay}; {r.ArrivalRemarks}");
+    await db.SaveChangesAsync();return Results.Ok(a);
+});
+
+async Task AddDiagnosticWorkAsync(AppDbContext db,JobCard jc,MaintenanceRequest mr,string priority)
+{
+    if(await db.WorkItems.AnyAsync(x=>x.JobCardId==jc.Id&&x.Description.StartsWith(mr.RequestNumber+" ·"))) return;
+    var code=string.IsNullOrWhiteSpace(mr.DiagnosticTemplateCode)?"DIAG-GENERAL":mr.DiagnosticTemplateCode;
+    var wt=await db.WorkTemplates.FirstOrDefaultAsync(x=>x.TemplateCode==code&&x.IsActive)
+           ?? await db.WorkTemplates.FirstOrDefaultAsync(x=>x.TemplateCode=="DIAG-GENERAL"&&x.IsActive);
+    var wi=new WorkItem{JobCardId=jc.Id,TaskCode=$"TSK-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid().ToString("N")[..4]}",
+        WorkType="Diagnostic",Description=$"{mr.RequestNumber} · {mr.Description}",Status="Not Started",Priority=priority,
+        EstimatedHours=wt?.StandardHours??0.5m,StandardRepairHours=wt?.StandardHours??0.5m,RequiresQc=true,RequiresHvAuthorization=wt?.RequiresHvAuthorization??false,UpdatedAt=DateTime.UtcNow};
+    db.WorkItems.Add(wi);
+    if(wt!=null)
+    {
+        var inst=new WorkTemplateInstance{JobCardId=jc.Id,WorkItemId=wi.Id,WorkTemplateId=wt.Id,TemplateCode=wt.TemplateCode,TemplateName=wt.Name,TemplateVersion=wt.Version};
+        db.WorkTemplateInstances.Add(inst);
+        var fields=await db.WorkTemplateFields.AsNoTracking().Where(x=>x.WorkTemplateId==wt.Id).OrderBy(x=>x.Sequence).ToListAsync();
+        foreach(var field in fields)
+            db.WorkTemplateFieldInstances.Add(new WorkTemplateFieldInstance{WorkTemplateInstanceId=inst.Id,SourceTemplateFieldId=field.Id,SectionName=field.SectionName,Sequence=field.Sequence,
+                FieldCode=field.FieldCode,Label=field.Label,FieldType=field.FieldType,UnitCode=field.UnitCode,IsMandatory=field.IsMandatory,MinValue=field.MinValue,MaxValue=field.MaxValue,
+                Options=field.Options,FailureAction=field.FailureAction,SuggestedIssueCode=field.SuggestedIssueCode,
+                ActionCode=field.FieldType=="Number"?"M":field.FieldType=="Pass/Fail"?"F":field.FieldType=="OK/Not OK"||field.FieldType=="Yes/No"?"I":"D"});
+    }
+    mr.JobCardId=jc.Id;
+    mr.Status="Converted";
+}
+
+app.MapPost("/api/work-orders/{jobCardId:guid}/diagnosis/fallback", async (Guid jobCardId, AppDbContext db) =>
+{
+    var jc=await db.JobCards.FindAsync(jobCardId);if(jc is null)return Results.NotFound();
+    if(await db.WorkItems.AnyAsync(x=>x.JobCardId==jobCardId))return Results.Conflict(new{message="Work Order already has executable work."});
+    var evt=await db.ServiceEvents.FindAsync(jc.ServiceEventId);if(evt is null)return Results.BadRequest(new{message="Service event not found."});
+    var mr=await db.MaintenanceRequests.Where(x=>x.VehicleId==evt.VehicleId&&x.Status!="Cancelled").OrderByDescending(x=>x.RequestedAt).FirstOrDefaultAsync();
+    if(mr is null)mr=new MaintenanceRequest{RequestNumber="GENERAL-DIAG",VehicleId=evt.VehicleId,Description="General diagnosis / technician findings",ComplaintCategoryCode="GENERAL",SymptomCode="OTHER",DiagnosticTemplateCode="DIAG-GENERAL",Priority=evt.Priority};
+    await AddDiagnosticWorkAsync(db,jc,mr,evt.Priority);
+    await db.SaveChangesAsync();
+    return Results.Ok(new{message="General diagnostic checklist generated."});
+});
+
 app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbContext db) =>
 {
     var a=await db.Appointments.FindAsync(id); if(a is null)return Results.NotFound();
@@ -1455,6 +1640,10 @@ app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbCo
             }
         }
     }
+    var linkedRequests=await db.MaintenanceRequests.Where(x=>x.VehicleId==v.Id && x.Status!="Cancelled" && x.Status!="Converted" &&
+        ((a.SourceType=="Maintenance Request" && x.Id.ToString()==a.SourceReference) || (a.PmObligationId.HasValue && (x.Status=="Open"||x.Status=="Vehicle Arrived")))).OrderBy(x=>x.RequestedAt).ToListAsync();
+    foreach(var mr in linkedRequests) await AddDiagnosticWorkAsync(db,jc,mr,a.Priority);
+
     db.VehicleAvailabilityLedger.Add(new VehicleAvailabilityLedger{VehicleId=v.Id,State="Under Maintenance",StartAt=DateTime.UtcNow,
         ReasonCode=a.AppointmentType,SourceType="ServiceEvent",SourceServiceEventId=e.Id});
     if(a.PmObligationId.HasValue){var p=await db.PmObligations.FindAsync(a.PmObligationId.Value);if(p!=null)p.Status="In Service";}
@@ -1571,7 +1760,7 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}/execution",async(Guid jobCar
     var items=await db.WorkItems.AsNoTracking().Where(x=>x.JobCardId==jobCardId).OrderBy(x=>x.TaskCode).ToListAsync();var ids=items.Select(x=>x.Id).ToList();
     var inst=await db.WorkTemplateInstances.AsNoTracking().Where(x=>x.JobCardId==jobCardId).ToListAsync();var instIds=inst.Select(x=>x.Id).ToList();
     var fields=await db.WorkTemplateFieldInstances.AsNoTracking().Where(x=>instIds.Contains(x.WorkTemplateInstanceId)).OrderBy(x=>x.Sequence).ToListAsync();var fieldIds=fields.Select(x=>x.Id).ToList();var issueIds=await db.Defects.AsNoTracking().Where(x=>x.ChecklistFieldInstanceId.HasValue&&fieldIds.Contains(x.ChecklistFieldInstanceId.Value)&&x.Disposition!="Closed").Select(x=>x.ChecklistFieldInstanceId!.Value).ToListAsync();
-    var sections=inst.Select(i=>{var wi=items.FirstOrDefault(x=>x.Id==i.WorkItemId);var fs=fields.Where(f=>f.WorkTemplateInstanceId==i.Id).Select(f=>new{f.Id,f.Sequence,f.FieldCode,f.Label,f.FieldType,f.ActionCode,f.Specification,f.Severity,f.UnitCode,f.IsMandatory,f.MinValue,f.MaxValue,f.Options,f.FailureAction,f.SuggestedIssueCode,f.Value,f.Result,f.Remarks,f.EvidenceReference,f.ExecutedAt,f.ExecutedBy,issueRecorded=issueIds.Contains(f.Id)});return new{workItemId=i.WorkItemId,taskCode=wi?.TaskCode??"",name=i.TemplateName,status=wi?.Status??i.Status,completed=fs.Count(x=>x.Result!="Pending"&&x.Value!=""),total=fs.Count(),fields=fs};});
+    var sections=inst.Select(i=>{var wi=items.FirstOrDefault(x=>x.Id==i.WorkItemId);var fs=fields.Where(f=>f.WorkTemplateInstanceId==i.Id).Select(f=>new{f.Id,f.Sequence,f.FieldCode,f.Label,f.FieldType,f.ActionCode,f.Specification,f.Severity,f.UnitCode,f.IsMandatory,f.MinValue,f.MaxValue,f.Options,f.FailureAction,f.SuggestedIssueCode,f.Value,f.Result,f.Remarks,f.EvidenceReference,f.ExecutedAt,f.ExecutedBy,issueRecorded=issueIds.Contains(f.Id)});return new{workItemId=i.WorkItemId,taskCode=wi?.TaskCode??"",workType=wi?.WorkType??"",description=wi?.Description??"",name=i.TemplateName,status=wi?.Status??i.Status,completed=fs.Count(x=>x.Result!="Pending"&&x.Value!=""),total=fs.Count(),fields=fs};});
     var corrective=items.Where(x=>x.WorkType=="Corrective Repair").Select(x=>new{x.Id,x.TaskCode,x.Description,x.Status,x.Priority,x.DependencyTaskId});return Results.Ok(new{sections,corrective});
 });
 app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck-pass",async(Guid workItemId,Guid fieldId,AppDbContext db)=>{var d=await db.Defects.FirstOrDefaultAsync(x=>x.ChecklistFieldInstanceId==fieldId&&x.Disposition!="Closed");if(d is null)return Results.NotFound(new{message="No open issue found."});if(d.CorrectiveWorkItemId.HasValue){var c=await db.WorkItems.FindAsync(d.CorrectiveWorkItemId.Value);if(c!=null&&c.Status!="Completed")return Results.Conflict(new{message="Complete the corrective work before recheck."});}d.Disposition="Closed";d.ClosedAt=DateTime.UtcNow;var f=await db.WorkTemplateFieldInstances.FindAsync(fieldId);if(f!=null){f.Result="Pass";f.Value=f.FieldType=="OK/Not OK"?"OK":"Pass";f.ExecutedAt=DateTime.UtcNow;}await db.SaveChangesAsync();return Results.Ok();});
@@ -1811,9 +2000,35 @@ app.MapGet("/api/documents/{vin}", async (string vin, AppDbContext db) =>
 app.MapGet("/api/search", async (string? q, AppDbContext db) =>
 {
     var term=(q??"").Trim().ToLower();
-    var vehicles=await db.Vehicles.AsNoTracking().Where(x=>term=="" || x.Vin.ToLower().Contains(term) || x.RegistrationNumber.ToLower().Contains(term)).Take(10)
-        .Select(x=>new { type="Vehicle",key=x.RegistrationNumber,title=x.Model+" · "+x.Vin,status=x.Status }).ToListAsync();
-    return Results.Ok(new { query=q??"", results=vehicles });
+    if(string.IsNullOrWhiteSpace(term)) return Results.Ok(new { query=q??"", results=Array.Empty<object>() });
+
+    var vehicles=await db.Vehicles.AsNoTracking()
+        .Where(x=>x.Vin.ToLower().Contains(term)||x.RegistrationNumber.ToLower().Contains(term)||x.Model.ToLower().Contains(term))
+        .Take(15)
+        .Select(x=>new { type="Vehicle",key=x.RegistrationNumber,title=x.Model+" · "+x.Vin,status=x.Status,url="/vehicle?id="+x.Id }).ToListAsync();
+
+    var workOrders=await (from j in db.JobCards.AsNoTracking()
+                          join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
+                          join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
+                          where j.JobCardNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)
+                          orderby j.StartedAt descending
+                          select new {type="Work Order",key=j.JobCardNumber,title=v.RegistrationNumber+" · "+e.EventType,status=j.Status,url="/service-workspace/"+j.Id}).Take(15).ToListAsync();
+
+    var events=await (from e in db.ServiceEvents.AsNoTracking()
+                      join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
+                      where e.EventNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)
+                      orderby e.OpenedAt descending
+                      select new {type="Service Event",key=e.EventNumber,title=v.RegistrationNumber+" · "+e.EventType,status=e.Status,url="/service"}).Take(10).ToListAsync();
+
+    var requests=await (from r in db.MaintenanceRequests.AsNoTracking()
+                        join v in db.Vehicles.AsNoTracking() on r.VehicleId equals v.Id
+                        where r.RequestNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)||r.Description.ToLower().Contains(term)
+                        orderby r.RequestedAt descending
+                        select new {type="Maintenance Request",key=r.RequestNumber,title=v.RegistrationNumber+" · "+r.Description,status=r.Status,url="/maintenance-requests"}).Take(10).ToListAsync();
+
+    var results=new List<object>();
+    results.AddRange(vehicles);results.AddRange(workOrders);results.AddRange(events);results.AddRange(requests);
+    return Results.Ok(new { query=q??"", results });
 });
 
 
@@ -1967,6 +2182,14 @@ app.MapGet("/api/quality", async (AppDbContext db)=>
 
 
 // ---------------- v1.5 Functional Fleet Maintenance Baseline ----------------
+app.MapGet("/api/maintenance-requests/config", async (AppDbContext db) =>
+{
+    var categories=await db.MasterOptions.AsNoTracking().Where(x=>x.Category=="COMPLAINT_CATEGORY"&&x.IsActive).OrderBy(x=>x.SortOrder).Select(x=>new{x.Code,x.Name,templateCode=x.Value,x.Description}).ToListAsync();
+    var symptoms=await db.MasterOptions.AsNoTracking().Where(x=>x.Category=="SYMPTOM"&&x.IsActive).OrderBy(x=>x.SortOrder).Select(x=>new{x.Code,x.Name,x.Description}).ToListAsync();
+    var centres=await db.ServiceCentreMasters.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.Name).Select(x=>new{x.Id,x.CentreCode,x.Name,x.City,x.State,x.BayCount}).ToListAsync();
+    return Results.Ok(new{categories,symptoms,centres});
+});
+
 app.MapGet("/api/maintenance-requests", async (string? status, Guid? vehicleId, AppDbContext db) =>
 {
     var q=db.MaintenanceRequests.AsNoTracking().AsQueryable();
@@ -1974,15 +2197,19 @@ app.MapGet("/api/maintenance-requests", async (string? status, Guid? vehicleId, 
     if(vehicleId.HasValue)q=q.Where(x=>x.VehicleId==vehicleId.Value);
     var rows=await (from r in q join v in db.Vehicles.AsNoTracking() on r.VehicleId equals v.Id
         orderby r.RequestedAt descending select new{r.Id,r.RequestNumber,r.VehicleId,vehicle=v.RegistrationNumber,r.SourceType,r.SourceReference,
-        r.RequestType,r.Priority,r.Description,r.Status,r.RequestedBy,r.RequestedAt,r.TargetDate,r.JobCardId}).ToListAsync();
+        r.RequestType,r.ComplaintCategoryCode,r.SymptomCode,r.DiagnosticTemplateCode,r.Priority,r.Description,r.Status,r.RequestedBy,r.RequestedAt,r.TargetDate,r.JobCardId}).ToListAsync();
     return Results.Ok(rows);
 });
 app.MapPost("/api/maintenance-requests", async (MaintenanceRequestCreate r, AppDbContext db) =>
 {
     if(!await db.Vehicles.AnyAsync(x=>x.Id==r.VehicleId))return Results.BadRequest(new{message="Vehicle not found."});
+    var category=(r.ComplaintCategoryCode??"GENERAL").Trim().ToUpperInvariant();
+    var mapping=await db.MasterOptions.AsNoTracking().FirstOrDefaultAsync(x=>x.Category=="COMPLAINT_CATEGORY"&&x.Code==category&&x.IsActive);
+    var templateCode=string.IsNullOrWhiteSpace(mapping?.Value)?"DIAG-GENERAL":mapping!.Value;
     var mr=new MaintenanceRequest{RequestNumber=$"MR-{DateTime.UtcNow:yyyyMMdd}-{(await db.MaintenanceRequests.CountAsync()+1):D5}",VehicleId=r.VehicleId,
-        SourceType=r.SourceType,SourceReference=r.SourceReference,RequestType=r.RequestType,Priority=r.Priority,Description=r.Description,
-        Status="Open",RequestedBy=r.RequestedBy,RequestedAt=DateTime.UtcNow,TargetDate=r.TargetDate};
+        SourceType=r.SourceType,SourceReference=r.SourceReference,RequestType=r.RequestType,ComplaintCategoryCode=category,
+        SymptomCode=string.IsNullOrWhiteSpace(r.SymptomCode)?"OTHER":r.SymptomCode.Trim().ToUpperInvariant(),DiagnosticTemplateCode=templateCode,
+        Priority=r.Priority,Description=r.Description,Status="Open",RequestedBy=r.RequestedBy,RequestedAt=DateTime.UtcNow,TargetDate=r.TargetDate};
     db.MaintenanceRequests.Add(mr);Audit(db,"CREATE","MaintenanceRequest",mr.Id,$"{mr.RequestNumber}:{mr.Description}",r.RequestedBy);await db.SaveChangesAsync();return Results.Created($"/api/maintenance-requests/{mr.Id}",mr);
 });
 app.MapPut("/api/maintenance-requests/{id:guid}/status", async (Guid id,StatusRequest r,AppDbContext db)=>{var x=await db.MaintenanceRequests.FindAsync(id);if(x is null)return Results.NotFound();x.Status=r.Status;Audit(db,"STATUS","MaintenanceRequest",x.Id,r.Status);await db.SaveChangesAsync();return Results.Ok(x);});
@@ -2101,6 +2328,7 @@ record AppointmentRequest(Guid VehicleId, Guid? PmObligationId, string SourceTyp
     Guid? TechnicianId, string AppointmentType, string Priority, string Reason, decimal PlannedHours, string CreatedBy);
 record WorkItemRequest(string WorkType, string Description, decimal? StandardRepairHours, bool RequiresQc, bool RequiresHvAuthorization);
 record StatusRequest(string Status);
+record CheckInRequest(string ServiceCentre,string Bay,decimal? OdometerKm,decimal? OperatingHours,decimal? EnergyKwh,string AdditionalComplaint,string ArrivalRemarks);
 record BreakdownRequest(Guid VehicleId, string Priority, string Location, string Complaint, string TriageDecision, string DispatchMode);
 record QcRequest(string Inspector, string Result, bool RoadTestRequired, bool RoadTestPassed, string Remarks);
 record ReleaseRequest(string ReleasedBy, string Remarks);
@@ -2127,7 +2355,7 @@ record PartRequestCreate(Guid JobCardId,Guid? WorkItemId,Guid PartMasterId,Guid 
 record QuantityAction(decimal Quantity,string User);
 
 
-record MaintenanceRequestCreate(Guid VehicleId,string SourceType,string SourceReference,string RequestType,string Priority,string Description,string RequestedBy,DateTime? TargetDate);
+record MaintenanceRequestCreate(Guid VehicleId,string SourceType,string SourceReference,string RequestType,string ComplaintCategoryCode,string SymptomCode,string Priority,string Description,string RequestedBy,DateTime? TargetDate);
 record CreateWorkOrderRequest(Guid[] RequestIds,string Priority,string Bay,Guid? TechnicianId,string Technician,string CreatedBy);
 record ServiceTaskMasterCreate(string TaskCode,string Name,string Category,string Description,decimal StandardHours,string RequiredSkillCode,bool RequiresHvAuthorization,bool RequiresQc,string ChecklistCode);
 record StandardPartCreate(Guid PartMasterId,decimal Quantity);
