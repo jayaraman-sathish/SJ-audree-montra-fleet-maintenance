@@ -1688,6 +1688,8 @@ app.MapGet("/api/service-events/active", async (AppDbContext db) =>
                       orderby e.OpenedAt descending
                       select new { e.Id,eventNo=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.Status,
                           breakdownId=e.BreakdownId,breakdownNumber=b!=null?b.BreakdownNumber:"",
+                          complaint=b!=null?b.Complaint:"",reportedAt=b!=null?b.ReportedAt:(DateTime?)null,
+                          breakdownLocation=b!=null?b.Location:"",dispatchMode=b!=null?b.DispatchMode:"",
                           jobCard=j!=null?j.JobCardNumber:"",jobCardId=j!=null?j.Id:(Guid?)null,bay=j!=null?j.Bay:"",
                           technician=j!=null?j.Technician:"",technicianId=j!=null?j.TechnicianId:null,sla=e.Priority }).ToListAsync();
     return Results.Ok(rows);
