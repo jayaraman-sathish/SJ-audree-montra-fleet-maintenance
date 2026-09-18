@@ -800,6 +800,17 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
+static async Task SyncServiceJobStatusAsync(AppDbContext db, Guid jobCardId)
+{
+    var job=await db.JobCards.FindAsync(jobCardId); if(job is null)return;
+    var service=await db.ServiceEvents.FindAsync(job.ServiceEventId); if(service is null)return;
+    if(service.Status=="Closed"||job.Status=="Completed") { service.Status="Closed"; job.Status="Completed"; return; }
+    if(service.Status=="On Hold"||job.Status=="On Hold") { service.Status="On Hold"; job.Status="On Hold"; return; }
+    if(service.Status=="In Progress"||job.Status=="In Progress") { service.Status="In Progress"; job.Status="In Progress"; return; }
+    if(service.Status=="Assigned"||job.Status=="Assigned") { service.Status="Assigned"; job.Status="Assigned"; return; }
+    service.Status="Open"; job.Status="Open";
+}
+
 app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.7" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
@@ -1639,7 +1650,7 @@ app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbCo
     var e=new ServiceEvent{VehicleId=v.Id,PmObligationId=a.PmObligationId,EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}",
         EventType=a.AppointmentType,Priority=a.Priority,Status="In Progress"};
     var jc=new JobCard{ServiceEventId=e.Id,JobCardNumber=$"JC-{DateTime.UtcNow:yyyy}-{(await db.JobCards.CountAsync()+1):D6}",
-        Status="Open",Bay=a.Bay,TechnicianId=a.TechnicianId,Technician=a.Technician,StartedAt=DateTime.UtcNow};
+        Status="In Progress",Bay=a.Bay,TechnicianId=a.TechnicianId,Technician=a.Technician,StartedAt=DateTime.UtcNow};
     a.Status="In Progress"; v.Status="Under Maintenance"; db.ServiceEvents.Add(e); db.JobCards.Add(jc);
     if(a.PmObligationId.HasValue)
     {
@@ -1763,6 +1774,7 @@ app.MapPut("/api/tasks/{id:guid}/status", async (Guid id, TaskStatusRequest r, A
         if(jc is not null){jc.Status="In Progress";var evt=await db.ServiceEvents.FindAsync(jc.ServiceEventId);if(evt is not null)evt.Status="In Progress";}
     }
     if(r.Status=="Completed")db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=t.JobCardId,WorkItemId=t.Id,EntryType="Task Completed",Comment=t.CompletionRemarks,CreatedBy=string.IsNullOrWhiteSpace(t.AssignedTo)?"Service User":t.AssignedTo,CreatedRole="Technician"});
+    await SyncServiceJobStatusAsync(db,t.JobCardId);
     Audit(db,"STATUS","Task",t.Id,$"{t.TaskCode}:{r.Status}");await db.SaveChangesAsync();return Results.Ok(t);
 });
 
@@ -1794,6 +1806,8 @@ app.MapPut("/api/job-cards/{id:guid}/assign", async (Guid id, JobCardAssignReque
         foreach(var task in tasks){task.AssignedToTechnicianId=tech.Id;task.AssignedTo=tech.Name;if(task.Status=="Not Started")task.Status="Assigned";task.UpdatedAt=DateTime.UtcNow;}
     }
     var evt=await db.ServiceEvents.FindAsync(jc.ServiceEventId);if(evt is not null&&tech is not null&&evt.Status=="Awaiting Assignment")evt.Status="Assigned";
+    if(tech is not null&&jc.Status=="Open")jc.Status="Assigned";
+    await SyncServiceJobStatusAsync(db,id);
     var by=string.IsNullOrWhiteSpace(r.AssignedBy)?"Service Supervisor":r.AssignedBy.Trim();
     db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=id,EntryType="Work Order Assigned",Comment=$"Technician: {jc.Technician}; Bay: {jc.Bay}",CreatedBy=by,CreatedRole="Supervisor"});
     Audit(db,"ASSIGN","JobCard",jc.Id,$"{jc.JobCardNumber}->{jc.Technician}; bay={jc.Bay}",by);await db.SaveChangesAsync();return Results.Ok(jc);
@@ -1831,7 +1845,7 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}", async (Guid jobCardId, App
 {
     var data=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
                     join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id where j.Id==jobCardId
-                    select new{jobCardId=j.Id,j.JobCardNumber,j.Status,j.Bay,j.Technician,j.TechnicianId,serviceEventId=e.Id,e.EventNumber,e.EventType,e.Priority,e.BreakdownId,
+                    select new{jobCardId=j.Id,j.JobCardNumber,j.Status,j.Bay,j.Technician,j.TechnicianId,serviceEventId=e.Id,e.EventNumber,e.EventType,e.Priority,eventStatus=e.Status,e.BreakdownId,
                         vehicleId=v.Id,vehicle=v.RegistrationNumber,v.Vin,v.Model,v.OdometerKm,v.OperatingHours}).FirstOrDefaultAsync();
     if(data is null)return Results.NotFound();
     var breakdown=data.BreakdownId.HasValue?await db.Breakdowns.AsNoTracking().Where(x=>x.Id==data.BreakdownId.Value)
@@ -1851,6 +1865,28 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}/execution",async(Guid jobCar
     var corrective=items.Where(x=>x.WorkType=="Corrective Repair").Select(x=>{var d=defects.FirstOrDefault(z=>z.CorrectiveWorkItemId==x.Id);var f=d?.ChecklistFieldInstanceId is Guid fieldKey?fields.FirstOrDefault(z=>z.Id==fieldKey):null;return new{x.Id,x.TaskCode,x.Description,x.Status,x.Priority,x.DependencyTaskId,x.AssignedToTechnicianId,x.AssignedTo,x.ActualHours,x.CompletionRemarks,defectId=d?.Id,originFieldId=d?.ChecklistFieldInstanceId,originCode=f?.FieldCode??"",originLabel=f?.Label??"",issue=d?.Description??"",severity=d?.Severity??""};});return Results.Ok(new{sections,corrective});
 });
 app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck-pass",async(Guid workItemId,Guid fieldId,AppDbContext db)=>{var d=await db.Defects.FirstOrDefaultAsync(x=>x.ChecklistFieldInstanceId==fieldId&&x.Disposition!="Closed");if(d is null)return Results.NotFound(new{message="No open issue found."});if(d.CorrectiveWorkItemId.HasValue){var c=await db.WorkItems.FindAsync(d.CorrectiveWorkItemId.Value);if(c!=null&&c.Status!="Completed")return Results.Conflict(new{message="Complete the corrective work before recheck."});}d.Disposition="Closed";d.ClosedAt=DateTime.UtcNow;var f=await db.WorkTemplateFieldInstances.FindAsync(fieldId);if(f!=null){f.Result="Pass";f.Value=f.FieldType=="OK/Not OK"?"OK":"Pass";f.ExecutedAt=DateTime.UtcNow;}await db.SaveChangesAsync();return Results.Ok();});
+app.MapGet("/api/service-workspace/{jobCardId:guid}/timeline", async (Guid jobCardId, AppDbContext db) =>
+{
+    var job = await db.JobCards.AsNoTracking().FirstOrDefaultAsync(x => x.Id == jobCardId);
+    if (job is null) return Results.NotFound();
+    var evt = await db.ServiceEvents.AsNoTracking().FirstOrDefaultAsync(x => x.Id == job.ServiceEventId);
+    if (evt is null) return Results.NotFound();
+    var items = new[] { new { at = (DateTime?)evt.OpenedAt, stage = "Service Event", status = "Opened", detail = evt.EventNumber } }.ToList();
+    if (job.StartedAt.HasValue)
+        items.Add(new { at = job.StartedAt, stage = "Work Order", status = "Start recorded", detail = job.JobCardNumber });
+    var logs = await db.WorkLogEntries.AsNoTracking().Where(x => x.JobCardId == jobCardId)
+        .Select(x => new { x.CreatedAt, x.EntryType, x.Comment }).ToListAsync();
+    foreach (var x in logs)
+        items.Add(new { at = (DateTime?)x.CreatedAt, stage = x.EntryType, status = "Recorded", detail = x.Comment });
+    var qc = await db.QcInspections.AsNoTracking().Where(x => x.JobCardId == jobCardId && x.InspectedAt.HasValue)
+        .Select(x => new { x.InspectedAt, x.Result, x.Remarks }).ToListAsync();
+    foreach (var x in qc)
+        items.Add(new { at = x.InspectedAt, stage = "Quality Control", status = x.Result, detail = x.Remarks });
+    var releases = await db.VehicleReleases.AsNoTracking().Where(x => x.ServiceEventId == evt.Id && x.ReleasedAt.HasValue).ToListAsync();
+    foreach (var release in releases)
+        items.Add(new { at = release.ReleasedAt, stage = "Vehicle Release", status = release.ReleaseStatus, detail = release.Remarks });
+    return Results.Ok(items.OrderBy(x => x.at));
+});
 
 app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck",async(Guid workItemId,Guid fieldId,RecheckRequest r,AppDbContext db)=>
 {
@@ -2185,13 +2221,14 @@ app.MapGet("/api/search", async (string? q, AppDbContext db) =>
                           join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
                           where j.JobCardNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)
                           orderby j.StartedAt descending
-                          select new {type="Work Order",key=j.JobCardNumber,title=v.RegistrationNumber+" · "+e.EventType,status=j.Status,url="/service-workspace/"+j.Id}).Take(15).ToListAsync();
+                          select new {type="Work Order",key=j.JobCardNumber,title=v.RegistrationNumber+" · "+e.EventType,status=j.Status,linkedReference=e.EventNumber,linkedStatus=e.Status,detail="Engineer: "+(j.Technician==""?"Unassigned":j.Technician)+" · Bay: "+(j.Bay==""?"Not assigned":j.Bay),url="/service-workspace/"+j.Id}).Take(15).ToListAsync();
 
     var events=await (from e in db.ServiceEvents.AsNoTracking()
                       join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
                       where e.EventNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)
                       orderby e.OpenedAt descending
-                      select new {type="Service Event",key=e.EventNumber,title=v.RegistrationNumber+" · "+e.EventType,status=e.Status,url="/service"}).Take(10).ToListAsync();
+                      join j0 in db.JobCards.AsNoTracking() on e.Id equals j0.ServiceEventId into jj from j in jj.DefaultIfEmpty()
+                      select new {type="Service Event",key=e.EventNumber,title=v.RegistrationNumber+" · "+e.EventType,status=e.Status,linkedReference=j!=null?j.JobCardNumber:"",linkedStatus=j!=null?j.Status:"",detail=j==null?"No Work Order":("Engineer: "+(j.Technician==""?"Unassigned":j.Technician)+" · Bay: "+(j.Bay==""?"Not assigned":j.Bay)),url=j!=null?"/service-workspace/"+j.Id:"/service"}).Take(10).ToListAsync();
 
     var requests=await (from r in db.MaintenanceRequests.AsNoTracking()
                         join v in db.Vehicles.AsNoTracking() on r.VehicleId equals v.Id
