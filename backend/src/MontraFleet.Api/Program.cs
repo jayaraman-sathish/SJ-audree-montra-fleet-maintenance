@@ -722,6 +722,17 @@ using (var scope = app.Services.CreateScope())
         "Ground floor, khewat no 861, kherki daula, Jaipur Road, opp govt school main road nh 8, Kherki Daula","Gurugram","Haryana","122004","9891333888","RAJESHGULIA@SOLINDIA.NET");
     await EnsureCentreModels(sol,eviator,tractor27,tractor45);
 
+    foreach(var centre in new[]{anjana,sriram,sol})
+    {
+        for(var i=1;i<=3;i++)
+        {
+            var bayCode=$"Bay-{i:D2}";
+            if(!await db.ServiceBays.AnyAsync(x=>x.ServiceCentre==centre.CentreCode&&x.BayCode==bayCode))
+                db.ServiceBays.Add(new ServiceBay{ServiceCentre=centre.CentreCode,BayCode=bayCode,BayType="General",IsActive=true});
+        }
+    }
+    await db.SaveChangesAsync();
+
     if (!await db.InventoryLocations.AnyAsync())
     {
         db.InventoryLocations.Add(new InventoryLocation { LocationCode="MAIN-STORE", Name="Main Parts Store", ServiceCentre="Chennai Service Centre", Bin="GENERAL" });
@@ -1470,10 +1481,12 @@ app.MapGet("/api/appointments", async (AppDbContext db) =>
     return Results.Ok(rows);
 });
 
-app.MapGet("/api/capacity", async (DateTime? date, AppDbContext db) =>
+app.MapGet("/api/capacity", async (DateTime? date, string? serviceCentre, AppDbContext db) =>
 {
     var d=(date ?? DateTime.UtcNow).Date; var next=d.AddDays(1);
-    var bays=await db.ServiceBays.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.BayCode).ToListAsync();
+    var bayQuery=db.ServiceBays.AsNoTracking().Where(x=>x.IsActive);
+    if(!string.IsNullOrWhiteSpace(serviceCentre)) bayQuery=bayQuery.Where(x=>x.ServiceCentre==serviceCentre);
+    var bays=await bayQuery.OrderBy(x=>x.BayCode).ToListAsync();
     var techs=await db.Technicians.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.Name).ToListAsync();
     var appts=await db.Appointments.AsNoTracking().Where(x=>x.StartAt>=d && x.StartAt<next && x.Status!="Cancelled" && x.Status!="No-show").ToListAsync();
     return Results.Ok(new {
