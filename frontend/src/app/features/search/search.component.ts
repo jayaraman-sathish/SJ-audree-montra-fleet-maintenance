@@ -1,8 +1,8 @@
-import { Component } from '@angular/core';
+import { Component,OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
-import { Router } from '@angular/router';
+import { ActivatedRoute,Router } from '@angular/router';
 
 @Component({
  selector:'app-search',standalone:true,imports:[CommonModule,FormsModule],
@@ -17,9 +17,10 @@ import { Router } from '@angular/router';
  </section>`,
  styles:[`.page{padding:26px}.head h2{margin:0}.head p{color:#64748b}.search{display:flex;gap:10px;margin:16px 0 6px}.search input{flex:1;padding:12px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px}.btn,.open{border:1px solid #1266d5;border-radius:7px;padding:9px 14px}.btn-primary,.open{background:#1266d5;color:#fff}.hint{font-size:12px;color:#64748b;margin-bottom:14px}.card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px}.empty{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-top:14px;color:#64748b}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left}.type{background:#eaf3ff;padding:5px 8px;border-radius:12px;font-size:11px}`]
 })
-export class SearchComponent{
+export class SearchComponent implements OnInit{
  q='';rows:any[]=[];searched=false;
- constructor(private http:HttpClient,private router:Router){}
+ constructor(private http:HttpClient,private router:Router,private route:ActivatedRoute){}
+ ngOnInit(){this.route.queryParamMap.subscribe(p=>{const q=p.get('q');if(q){this.q=q;this.run()}})}
  run(){const term=this.q.trim();if(!term)return;this.http.get<any>('/api/search',{params:{q:term}}).subscribe(x=>{this.rows=x.results||[];this.searched=true})}
  open(x:any){if(x.url)this.router.navigateByUrl(x.url)}
 }
