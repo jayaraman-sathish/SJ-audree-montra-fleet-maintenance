@@ -1539,6 +1539,23 @@ app.MapPut("/api/appointments/{id:guid}/status", async (Guid id, StatusRequest r
     a.Status=r.Status; Audit(db,"STATUS","Appointment",a.Id,r.Status); await db.SaveChangesAsync(); return Results.Ok(a);
 });
 
+app.MapPost("/api/appointments/{id:guid}/check-in", async (Guid id, CheckInRequest r, AppDbContext db) =>
+{
+    var a=await db.Appointments.FindAsync(id); if(a is null)return Results.NotFound();
+    var v=await db.Vehicles.FindAsync(a.VehicleId); if(v is null)return Results.BadRequest(new{message="Vehicle not found."});
+    if(a.Status=="Cancelled"||a.Status=="Completed"||a.Status=="No-show")return Results.Conflict(new{message=$"Cannot check in a {a.Status} appointment."});
+    if(string.IsNullOrWhiteSpace(r.ServiceCentre)||string.IsNullOrWhiteSpace(r.Bay))return Results.BadRequest(new{message="Service centre and bay are required."});
+    var bayOk=await db.ServiceBays.AnyAsync(x=>x.IsActive&&x.ServiceCentre==r.ServiceCentre&&x.BayCode==r.Bay);
+    if(!bayOk)return Results.BadRequest(new{message="Selected bay does not belong to the selected service centre."});
+    a.ServiceCentre=r.ServiceCentre;a.Bay=r.Bay;a.Status="Checked-In";
+    if(!string.IsNullOrWhiteSpace(r.AdditionalComplaint))a.Reason=string.IsNullOrWhiteSpace(a.Reason)?r.AdditionalComplaint:$"{a.Reason}; {r.AdditionalComplaint}";
+    if(r.OdometerKm.HasValue&&r.OdometerKm.Value>=v.OdometerKm)v.OdometerKm=r.OdometerKm.Value;
+    if(r.OperatingHours.HasValue&&r.OperatingHours.Value>=v.OperatingHours)v.OperatingHours=r.OperatingHours.Value;
+    if(r.EnergyKwh.HasValue&&r.EnergyKwh.Value>=v.EnergyKwh)v.EnergyKwh=r.EnergyKwh.Value;
+    Audit(db,"CHECKIN","Appointment",a.Id,$"{v.RegistrationNumber} @ {r.ServiceCentre}/{r.Bay}; {r.ArrivalRemarks}");
+    await db.SaveChangesAsync();return Results.Ok(a);
+});
+
 async Task AddDiagnosticWorkAsync(AppDbContext db,JobCard jc,MaintenanceRequest mr,string priority)
 {
     var code=string.IsNullOrWhiteSpace(mr.DiagnosticTemplateCode)?"DIAG-GENERAL":mr.DiagnosticTemplateCode;
@@ -2297,6 +2314,7 @@ record AppointmentRequest(Guid VehicleId, Guid? PmObligationId, string SourceTyp
     Guid? TechnicianId, string AppointmentType, string Priority, string Reason, decimal PlannedHours, string CreatedBy);
 record WorkItemRequest(string WorkType, string Description, decimal? StandardRepairHours, bool RequiresQc, bool RequiresHvAuthorization);
 record StatusRequest(string Status);
+record CheckInRequest(string ServiceCentre,string Bay,decimal? OdometerKm,decimal? OperatingHours,decimal? EnergyKwh,string AdditionalComplaint,string ArrivalRemarks);
 record BreakdownRequest(Guid VehicleId, string Priority, string Location, string Complaint, string TriageDecision, string DispatchMode);
 record QcRequest(string Inspector, string Result, bool RoadTestRequired, bool RoadTestPassed, string Remarks);
 record ReleaseRequest(string ReleasedBy, string Remarks);
