@@ -1602,13 +1602,20 @@ async Task AddDiagnosticWorkAsync(AppDbContext db,JobCard jc,MaintenanceRequest 
 app.MapPost("/api/work-orders/{jobCardId:guid}/diagnosis/fallback", async (Guid jobCardId, AppDbContext db) =>
 {
     var jc=await db.JobCards.FindAsync(jobCardId);if(jc is null)return Results.NotFound();
-    if(await db.WorkItems.AnyAsync(x=>x.JobCardId==jobCardId))return Results.Conflict(new{message="Work Order already has executable work."});
+    var existing=await db.WorkTemplateInstances.AsNoTracking().Where(x=>x.JobCardId==jobCardId&&x.TemplateCode=="DIAG-GENERAL").Select(x=>x.WorkItemId).FirstOrDefaultAsync();
+    if(existing!=Guid.Empty)return Results.Conflict(new{message="General Diagnosis already exists.",workItemId=existing});
     var evt=await db.ServiceEvents.FindAsync(jc.ServiceEventId);if(evt is null)return Results.BadRequest(new{message="Service event not found."});
-    var mr=await db.MaintenanceRequests.Where(x=>x.VehicleId==evt.VehicleId&&x.Status!="Cancelled").OrderByDescending(x=>x.RequestedAt).FirstOrDefaultAsync();
-    if(mr is null)mr=new MaintenanceRequest{RequestNumber="GENERAL-DIAG",VehicleId=evt.VehicleId,Description="General diagnosis / technician findings",ComplaintCategoryCode="GENERAL",SymptomCode="OTHER",DiagnosticTemplateCode="DIAG-GENERAL",Priority=evt.Priority};
+    var breakdown=evt.BreakdownId.HasValue?await db.Breakdowns.FindAsync(evt.BreakdownId.Value):null;
+    var reference=breakdown?.BreakdownNumber??"GENERAL-DIAG";
+    var description=breakdown is null?"General diagnosis / technician findings":$"General diagnosis for breakdown: {breakdown.Complaint}";
+    var mr=new MaintenanceRequest{RequestNumber=reference,VehicleId=evt.VehicleId,Description=description,ComplaintCategoryCode="GENERAL",SymptomCode="OTHER",DiagnosticTemplateCode="DIAG-GENERAL",Priority=evt.Priority};
     await AddDiagnosticWorkAsync(db,jc,mr,evt.Priority);
+    var created=db.ChangeTracker.Entries<WorkItem>().Select(x=>x.Entity).FirstOrDefault(x=>x.JobCardId==jobCardId&&x.Description.StartsWith(reference+" ·"));
+    if(created is not null&&jc.TechnicianId.HasValue){created.AssignedToTechnicianId=jc.TechnicianId;created.AssignedTo=jc.Technician;created.Status="Assigned";}
+    db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=jobCardId,WorkItemId=created?.Id,EntryType="General Diagnosis Added",Comment=description,CreatedBy="Service Supervisor",CreatedRole="Supervisor"});
+    Audit(db,"CREATE","GeneralDiagnosis",created?.Id??jobCardId,$"{reference}: {description}","Service Supervisor");
     await db.SaveChangesAsync();
-    return Results.Ok(new{message="General diagnostic checklist generated."});
+    return Results.Ok(new{message="General diagnostic checklist generated.",workItemId=created?.Id});
 });
 
 app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbContext db) =>
@@ -1673,11 +1680,16 @@ app.MapGet("/api/service-events/active", async (AppDbContext db) =>
 {
     var rows = await (from e in db.ServiceEvents.AsNoTracking()
                       join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
+                      join b in db.Breakdowns.AsNoTracking() on e.BreakdownId equals (Guid?)b.Id into bb
+                      from b in bb.DefaultIfEmpty()
                       join j in db.JobCards.AsNoTracking() on e.Id equals j.ServiceEventId into jj
                       from j in jj.DefaultIfEmpty()
                       where e.Status!="Closed"
                       orderby e.OpenedAt descending
-                      select new { e.Id,eventNo=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.Status,jobCard=j!=null?j.JobCardNumber:"",jobCardId=j!=null?j.Id:(Guid?)null,bay=j!=null?j.Bay:"",technician=j!=null?j.Technician:"",sla=e.Priority }).ToListAsync();
+                      select new { e.Id,eventNo=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.Status,
+                          breakdownId=e.BreakdownId,breakdownNumber=b!=null?b.BreakdownNumber:"",
+                          jobCard=j!=null?j.JobCardNumber:"",jobCardId=j!=null?j.Id:(Guid?)null,bay=j!=null?j.Bay:"",
+                          technician=j!=null?j.Technician:"",technicianId=j!=null?j.TechnicianId:null,sla=e.Priority }).ToListAsync();
     return Results.Ok(rows);
 });
 
@@ -1727,10 +1739,16 @@ app.MapPut("/api/tasks/{id:guid}/status", async (Guid id, TaskStatusRequest r, A
 {
     var t=await db.WorkItems.FindAsync(id);if(t is null)return Results.NotFound();
     var allowed=new[]{"Pending Approval","Not Started","Assigned","In Progress","On Hold","Completed","Cancelled"};if(!allowed.Contains(r.Status))return Results.BadRequest(new{message="Invalid task status."});
+    if(r.Status=="In Progress"&&!t.AssignedToTechnicianId.HasValue)return Results.Conflict(new{message="Assign a technician before starting this work."});
     if(r.Status=="In Progress" && t.DependencyTaskId.HasValue && t.WorkType!="Corrective Repair"){var d=await db.WorkItems.FindAsync(t.DependencyTaskId.Value);if(d!=null&&d.Status!="Completed")return Results.Conflict(new{message=$"Dependency {d.TaskCode} must be completed first."});}
     if(r.Status=="Completed"&&(t.WorkType=="Corrective Repair"||t.WorkType=="Additional Work")&&string.IsNullOrWhiteSpace(r.CompletionRemarks))
         return Results.Conflict(new{message="Record the work performed before completing this task."});
     t.Status=r.Status;t.ActualHours=r.ActualHours??t.ActualHours;t.CompletionRemarks=r.CompletionRemarks??t.CompletionRemarks;t.EvidenceReference=r.EvidenceReference??t.EvidenceReference;t.UpdatedAt=DateTime.UtcNow;
+    if(r.Status=="In Progress")
+    {
+        var jc=await db.JobCards.FindAsync(t.JobCardId);
+        if(jc is not null){jc.Status="In Progress";var evt=await db.ServiceEvents.FindAsync(jc.ServiceEventId);if(evt is not null)evt.Status="In Progress";}
+    }
     if(r.Status=="Completed")db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=t.JobCardId,WorkItemId=t.Id,EntryType="Task Completed",Comment=t.CompletionRemarks,CreatedBy=string.IsNullOrWhiteSpace(t.AssignedTo)?"Service User":t.AssignedTo,CreatedRole="Technician"});
     Audit(db,"STATUS","Task",t.Id,$"{t.TaskCode}:{r.Status}");await db.SaveChangesAsync();return Results.Ok(t);
 });
@@ -1743,6 +1761,29 @@ app.MapPut("/api/tasks/{id:guid}/assign", async (Guid id, TaskAssignRequest r, A
     if(t.RequiresHvAuthorization && (!tech.HvAuthorized || tech.HvAuthorizationValidUntil<DateTime.UtcNow))return Results.Conflict(new{message="Task requires active HV authorization."});
     t.AssignedToTechnicianId=tech.Id;t.AssignedTo=tech.Name;if(t.Status=="Not Started")t.Status="Assigned";t.UpdatedAt=DateTime.UtcNow;
     Audit(db,"ASSIGN","Task",t.Id,$"{t.TaskCode}->{tech.Name}");await db.SaveChangesAsync();return Results.Ok(t);
+});
+
+app.MapPut("/api/job-cards/{id:guid}/assign", async (Guid id, JobCardAssignRequest r, AppDbContext db) =>
+{
+    var jc=await db.JobCards.FindAsync(id);if(jc is null)return Results.NotFound();
+    Technician? tech=null;
+    if(r.TechnicianId.HasValue)
+    {
+        tech=await db.Technicians.FindAsync(r.TechnicianId.Value);
+        if(tech is null||!tech.IsActive)return Results.BadRequest(new{message="Select an active technician."});
+        jc.TechnicianId=tech.Id;jc.Technician=tech.Name;
+    }
+    if(!string.IsNullOrWhiteSpace(r.Bay))jc.Bay=r.Bay.Trim();
+    if(tech is null&&string.IsNullOrWhiteSpace(r.Bay))return Results.BadRequest(new{message="Select a technician or bay."});
+    if(tech is not null&&r.AssignOpenTasks)
+    {
+        var tasks=await db.WorkItems.Where(x=>x.JobCardId==id&&x.Status!="Completed"&&x.Status!="Cancelled"&&x.Status!="Pending Approval").ToListAsync();
+        foreach(var task in tasks){task.AssignedToTechnicianId=tech.Id;task.AssignedTo=tech.Name;if(task.Status=="Not Started")task.Status="Assigned";task.UpdatedAt=DateTime.UtcNow;}
+    }
+    var evt=await db.ServiceEvents.FindAsync(jc.ServiceEventId);if(evt is not null&&tech is not null&&evt.Status=="Awaiting Assignment")evt.Status="Assigned";
+    var by=string.IsNullOrWhiteSpace(r.AssignedBy)?"Service Supervisor":r.AssignedBy.Trim();
+    db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=id,EntryType="Work Order Assigned",Comment=$"Technician: {jc.Technician}; Bay: {jc.Bay}",CreatedBy=by,CreatedRole="Supervisor"});
+    Audit(db,"ASSIGN","JobCard",jc.Id,$"{jc.JobCardNumber}->{jc.Technician}; bay={jc.Bay}",by);await db.SaveChangesAsync();return Results.Ok(jc);
 });
 
 app.MapPost("/api/tasks/{id:guid}/approve", async (Guid id, WorkApprovalRequest r, AppDbContext db) =>
@@ -1777,21 +1818,23 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}", async (Guid jobCardId, App
 {
     var data=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
                     join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id where j.Id==jobCardId
-                    select new{jobCardId=j.Id,j.JobCardNumber,j.Status,j.Bay,j.Technician,j.TechnicianId,serviceEventId=e.Id,e.EventNumber,e.EventType,e.Priority,
+                    select new{jobCardId=j.Id,j.JobCardNumber,j.Status,j.Bay,j.Technician,j.TechnicianId,serviceEventId=e.Id,e.EventNumber,e.EventType,e.Priority,e.BreakdownId,
                         vehicleId=v.Id,vehicle=v.RegistrationNumber,v.Vin,v.Model,v.OdometerKm,v.OperatingHours}).FirstOrDefaultAsync();
     if(data is null)return Results.NotFound();
+    var breakdown=data.BreakdownId.HasValue?await db.Breakdowns.AsNoTracking().Where(x=>x.Id==data.BreakdownId.Value)
+        .Select(x=>new{x.Id,x.BreakdownNumber,x.Complaint,x.Location,x.DispatchMode,x.TriageDecision,x.ReportedAt,x.ResponseAt,x.RestoredAt,x.Status}).FirstOrDefaultAsync():null;
     var tasks=await db.WorkItems.CountAsync(x=>x.JobCardId==jobCardId);var completed=await db.WorkItems.CountAsync(x=>x.JobCardId==jobCardId&&x.Status=="Completed");
     var defects=await db.Defects.CountAsync(x=>x.JobCardId==jobCardId&&x.Disposition!="Closed");
     var instanceIds=await db.WorkTemplateInstances.Where(x=>x.JobCardId==jobCardId).Select(x=>x.Id).ToListAsync();var checks=await db.WorkTemplateFieldInstances.CountAsync(x=>instanceIds.Contains(x.WorkTemplateInstanceId));var checksDone=await db.WorkTemplateFieldInstances.CountAsync(x=>instanceIds.Contains(x.WorkTemplateInstanceId)&&x.Result!="Pending"&&x.Value!="");
     var parts=await db.PartRequests.CountAsync(x=>x.JobCardId==jobCardId);var partsWaiting=await db.PartRequests.CountAsync(x=>x.JobCardId==jobCardId&&(x.Status=="Requested"||x.Status=="Awaiting Stock"));var qc=await db.QcInspections.Where(x=>x.JobCardId==jobCardId).OrderByDescending(x=>x.InspectedAt).Select(x=>x.Result).FirstOrDefaultAsync();
-    return Results.Ok(new{data,tasks,completedTasks=completed,checksTotal=checks,checksCompleted=checksDone,openDefects=defects,partTransactions=parts,partsWaiting,qcStatus=qc??"Pending"});
+    return Results.Ok(new{data,breakdown,tasks,completedTasks=completed,checksTotal=checks,checksCompleted=checksDone,openDefects=defects,partTransactions=parts,partsWaiting,qcStatus=qc??"Pending"});
 });
 app.MapGet("/api/service-workspace/{jobCardId:guid}/execution",async(Guid jobCardId,AppDbContext db)=>
 {
     var items=await db.WorkItems.AsNoTracking().Where(x=>x.JobCardId==jobCardId).OrderBy(x=>x.TaskCode).ToListAsync();var ids=items.Select(x=>x.Id).ToList();
     var inst=await db.WorkTemplateInstances.AsNoTracking().Where(x=>x.JobCardId==jobCardId).ToListAsync();var instIds=inst.Select(x=>x.Id).ToList();
     var fields=await db.WorkTemplateFieldInstances.AsNoTracking().Where(x=>instIds.Contains(x.WorkTemplateInstanceId)).OrderBy(x=>x.Sequence).ToListAsync();var fieldIds=fields.Select(x=>x.Id).ToList();var defects=await db.Defects.AsNoTracking().Where(x=>x.JobCardId==jobCardId).ToListAsync();var issueIds=defects.Where(x=>x.ChecklistFieldInstanceId.HasValue&&fieldIds.Contains(x.ChecklistFieldInstanceId.Value)&&x.Disposition!="Closed").Select(x=>x.ChecklistFieldInstanceId!.Value).ToList();
-    var sections=inst.Select(i=>{var wi=items.FirstOrDefault(x=>x.Id==i.WorkItemId);var fs=fields.Where(f=>f.WorkTemplateInstanceId==i.Id).Select(f=>new{f.Id,f.Sequence,f.FieldCode,f.Label,f.FieldType,f.ActionCode,f.Specification,f.Severity,f.UnitCode,f.IsMandatory,f.MinValue,f.MaxValue,f.Options,f.FailureAction,f.SuggestedIssueCode,f.Value,f.Result,f.Remarks,f.EvidenceReference,f.ExecutedAt,f.ExecutedBy,issueRecorded=issueIds.Contains(f.Id)});return new{workItemId=i.WorkItemId,taskCode=wi?.TaskCode??"",workType=wi?.WorkType??"",description=wi?.Description??"",name=i.TemplateName,status=wi?.Status??i.Status,completed=fs.Count(x=>x.Result!="Pending"&&x.Value!=""),total=fs.Count(),fields=fs};});
+    var sections=inst.Select(i=>{var wi=items.FirstOrDefault(x=>x.Id==i.WorkItemId);var fs=fields.Where(f=>f.WorkTemplateInstanceId==i.Id).Select(f=>new{f.Id,f.Sequence,f.FieldCode,f.Label,f.FieldType,f.ActionCode,f.Specification,f.Severity,f.UnitCode,f.IsMandatory,f.MinValue,f.MaxValue,f.Options,f.FailureAction,f.SuggestedIssueCode,f.Value,f.Result,f.Remarks,f.EvidenceReference,f.ExecutedAt,f.ExecutedBy,issueRecorded=issueIds.Contains(f.Id)});return new{workItemId=i.WorkItemId,taskCode=wi?.TaskCode??"",workType=wi?.WorkType??"",description=wi?.Description??"",templateCode=i.TemplateCode,name=i.TemplateName,status=wi?.Status??i.Status,completed=fs.Count(x=>x.Result!="Pending"&&x.Value!=""),total=fs.Count(),fields=fs};});
     var corrective=items.Where(x=>x.WorkType=="Corrective Repair").Select(x=>{var d=defects.FirstOrDefault(z=>z.CorrectiveWorkItemId==x.Id);var f=d?.ChecklistFieldInstanceId is Guid fieldKey?fields.FirstOrDefault(z=>z.Id==fieldKey):null;return new{x.Id,x.TaskCode,x.Description,x.Status,x.Priority,x.DependencyTaskId,x.AssignedToTechnicianId,x.AssignedTo,x.ActualHours,x.CompletionRemarks,defectId=d?.Id,originFieldId=d?.ChecklistFieldInstanceId,originCode=f?.FieldCode??"",originLabel=f?.Label??"",issue=d?.Description??"",severity=d?.Severity??""};});return Results.Ok(new{sections,corrective});
 });
 app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck-pass",async(Guid workItemId,Guid fieldId,AppDbContext db)=>{var d=await db.Defects.FirstOrDefaultAsync(x=>x.ChecklistFieldInstanceId==fieldId&&x.Disposition!="Closed");if(d is null)return Results.NotFound(new{message="No open issue found."});if(d.CorrectiveWorkItemId.HasValue){var c=await db.WorkItems.FindAsync(d.CorrectiveWorkItemId.Value);if(c!=null&&c.Status!="Completed")return Results.Conflict(new{message="Complete the corrective work before recheck."});}d.Disposition="Closed";d.ClosedAt=DateTime.UtcNow;var f=await db.WorkTemplateFieldInstances.FindAsync(fieldId);if(f!=null){f.Result="Pass";f.Value=f.FieldType=="OK/Not OK"?"OK":"Pass";f.ExecutedAt=DateTime.UtcNow;}await db.SaveChangesAsync();return Results.Ok();});
@@ -2029,8 +2072,16 @@ app.MapPost("/api/labour", async (LabourEntry l, AppDbContext db) =>
 
 app.MapGet("/api/breakdowns", async (AppDbContext db) =>
 {
-    var rows=await (from b in db.Breakdowns.AsNoTracking() join v in db.Vehicles.AsNoTracking() on b.VehicleId equals v.Id orderby b.ReportedAt descending
-                    select new { b.Id,b.BreakdownNumber,b.VehicleId,vehicle=v.RegistrationNumber,b.Priority,b.Location,b.Complaint,b.TriageDecision,b.DispatchMode,b.Status,b.ReportedAt }).ToListAsync();
+    var rows=await (from b in db.Breakdowns.AsNoTracking()
+                    join v in db.Vehicles.AsNoTracking() on b.VehicleId equals v.Id
+                    join e in db.ServiceEvents.AsNoTracking() on (Guid?)b.Id equals e.BreakdownId into ee
+                    from e in ee.DefaultIfEmpty()
+                    join j in db.JobCards.AsNoTracking() on e.Id equals j.ServiceEventId into jj
+                    from j in jj.DefaultIfEmpty()
+                    orderby b.ReportedAt descending
+                    select new { b.Id,b.BreakdownNumber,b.VehicleId,vehicle=v.RegistrationNumber,b.Priority,b.Location,b.Complaint,b.TriageDecision,b.DispatchMode,b.Status,b.ReportedAt,
+                        serviceEventId=e!=null?e.Id:(Guid?)null,serviceEventNumber=e!=null?e.EventNumber:"",serviceStatus=e!=null?e.Status:"",
+                        jobCardId=j!=null?j.Id:(Guid?)null,jobCardNumber=j!=null?j.JobCardNumber:"",bay=j!=null?j.Bay:"",technician=j!=null?j.Technician:"",technicianId=j!=null?j.TechnicianId:null }).ToListAsync();
     return Results.Ok(rows);
 });
 app.MapPost("/api/breakdowns", async (BreakdownRequest r, AppDbContext db) =>
@@ -2040,13 +2091,25 @@ app.MapPost("/api/breakdowns", async (BreakdownRequest r, AppDbContext db) =>
     v.Status="Breakdown"; db.Breakdowns.Add(b); db.VehicleAvailabilityLedger.Add(new VehicleAvailabilityLedger { VehicleId=v.Id, State="Breakdown", ReasonCode="Breakdown", SourceType="Breakdown", SourceBreakdownId=b.Id });
     Audit(db,"CREATE","Breakdown",b.Id,b.BreakdownNumber); await db.SaveChangesAsync(); return Results.Created($"/api/breakdowns/{b.Id}",b);
 });
-app.MapPost("/api/breakdowns/{id:guid}/convert", async (Guid id, AppDbContext db) =>
+app.MapPost("/api/breakdowns/{id:guid}/convert", async (Guid id, BreakdownConvertRequest r, AppDbContext db) =>
 {
     var b=await db.Breakdowns.FindAsync(id); if(b is null) return Results.NotFound();
     if (await db.ServiceEvents.AnyAsync(x=>x.BreakdownId==id)) return Results.Conflict(new { message="Already converted." });
-    var e=new ServiceEvent { VehicleId=b.VehicleId, BreakdownId=b.Id, EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}", EventType="Breakdown", Priority=b.Priority, Status="In Progress" };
-    var j=new JobCard { ServiceEventId=e.Id, JobCardNumber=$"JC-{DateTime.UtcNow:yyyy}-{(await db.JobCards.CountAsync()+1):D6}", Status="Open", StartedAt=DateTime.UtcNow };
-    b.Status="Converted"; db.ServiceEvents.Add(e); db.JobCards.Add(j); Audit(db,"CONVERT","Breakdown",b.Id,e.EventNumber); await db.SaveChangesAsync(); return Results.Ok(new { serviceEvent=e,jobCard=j });
+    Technician? tech=null;if(r.TechnicianId.HasValue){tech=await db.Technicians.FindAsync(r.TechnicianId.Value);if(tech is null||!tech.IsActive)return Results.BadRequest(new{message="Select an active technician."});}
+    var e=new ServiceEvent { VehicleId=b.VehicleId, BreakdownId=b.Id, EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}", EventType="Breakdown", Priority=b.Priority, Status=tech is null?"Awaiting Assignment":"Assigned" };
+    var j=new JobCard { ServiceEventId=e.Id, JobCardNumber=$"JC-{DateTime.UtcNow:yyyy}-{(await db.JobCards.CountAsync()+1):D6}", Status="Open",Bay=r.Bay?.Trim()??"",TechnicianId=tech?.Id,Technician=tech?.Name??"",StartedAt=null };
+    b.Status="Converted";b.ResponseAt??=DateTime.UtcNow;db.ServiceEvents.Add(e);db.JobCards.Add(j);
+    if(r.GenerateGeneralDiagnosis!=false)
+    {
+        var mr=new MaintenanceRequest{RequestNumber=b.BreakdownNumber,VehicleId=b.VehicleId,Description=$"General diagnosis for breakdown: {b.Complaint}",ComplaintCategoryCode="GENERAL",SymptomCode="OTHER",DiagnosticTemplateCode="DIAG-GENERAL",Priority=b.Priority};
+        await AddDiagnosticWorkAsync(db,j,mr,b.Priority);
+        var created=db.ChangeTracker.Entries<WorkItem>().Select(x=>x.Entity).Where(x=>x.JobCardId==j.Id).ToList();
+        foreach(var task in created)if(tech is not null){task.AssignedToTechnicianId=tech.Id;task.AssignedTo=tech.Name;task.Status="Assigned";}
+        db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=j.Id,WorkItemId=created.FirstOrDefault()?.Id,EntryType="General Diagnosis Added",Comment=$"Created from {b.BreakdownNumber}: {b.Complaint}",CreatedBy=r.ConvertedBy??"Service Supervisor",CreatedRole="Supervisor"});
+    }
+    var by=string.IsNullOrWhiteSpace(r.ConvertedBy)?"Service Supervisor":r.ConvertedBy.Trim();
+    db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=j.Id,EntryType="Breakdown Converted",Comment=$"{b.BreakdownNumber} → {e.EventNumber} → {j.JobCardNumber}",CreatedBy=by,CreatedRole="Supervisor"});
+    Audit(db,"CONVERT","Breakdown",b.Id,$"{b.BreakdownNumber}->{e.EventNumber}->{j.JobCardNumber}",by);await db.SaveChangesAsync();return Results.Ok(new { breakdownNumber=b.BreakdownNumber,serviceEvent=e,jobCard=j });
 });
 
 app.MapPost("/api/job-cards/{id:guid}/qc", async (Guid id, QcRequest r, AppDbContext db) =>
@@ -2427,6 +2490,7 @@ record WorkItemRequest(string WorkType, string Description, decimal? StandardRep
 record StatusRequest(string Status);
 record CheckInRequest(string ServiceCentre,string Bay,decimal? OdometerKm,decimal? OperatingHours,decimal? EnergyKwh,string AdditionalComplaint,string ArrivalRemarks);
 record BreakdownRequest(Guid VehicleId, string Priority, string Location, string Complaint, string TriageDecision, string DispatchMode);
+record BreakdownConvertRequest(bool? GenerateGeneralDiagnosis,Guid? TechnicianId,string? Bay,string? ConvertedBy);
 record QcRequest(string Inspector, string Result, bool RoadTestRequired, bool RoadTestPassed, string Remarks);
 record ReleaseRequest(string ReleasedBy, string Remarks);
 
@@ -2445,6 +2509,7 @@ record TaskRequest(Guid JobCardId,string WorkType,string Description,Guid? Assig
     Guid? DependencyTaskId,decimal? EstimatedHours,bool RequiresQc,bool RequiresHvAuthorization);
 record TaskStatusRequest(string Status,decimal? ActualHours,string? CompletionRemarks,string? EvidenceReference);
 record TaskAssignRequest(Guid TechnicianId);
+record JobCardAssignRequest(Guid? TechnicianId,string? Bay,bool AssignOpenTasks,string AssignedBy);
 record WorkApprovalRequest(string ApprovedBy,string Remarks);
 record WorkLogCreate(Guid? WorkItemId,Guid? ChecklistFieldInstanceId,string EntryType,string Comment,string CreatedBy,string CreatedRole);
 record AdditionalWorkCreate(string Description,string Reason,Guid? TechnicianId,decimal? EstimatedHours,string Priority,bool RequiresQc,string CreatedBy,string CreatedRole);
