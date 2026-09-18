@@ -128,6 +128,9 @@ using (var scope = app.Services.CreateScope())
           "RequestedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, "TargetDate" timestamptz NULL, "JobCardId" uuid NULL);
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_MaintenanceRequests_RequestNumber" ON "MaintenanceRequests" ("RequestNumber");
         CREATE INDEX IF NOT EXISTS "IX_MaintenanceRequests_Vehicle_Status" ON "MaintenanceRequests" ("VehicleId","Status");
+        ALTER TABLE "MaintenanceRequests" ADD COLUMN IF NOT EXISTS "ComplaintCategoryCode" text NOT NULL DEFAULT 'GENERAL';
+        ALTER TABLE "MaintenanceRequests" ADD COLUMN IF NOT EXISTS "SymptomCode" text NOT NULL DEFAULT 'OTHER';
+        ALTER TABLE "MaintenanceRequests" ADD COLUMN IF NOT EXISTS "DiagnosticTemplateCode" text NOT NULL DEFAULT 'DIAG-GENERAL';
 
         CREATE TABLE IF NOT EXISTS "ServiceTaskMasters" (
           "Id" uuid PRIMARY KEY, "TaskCode" text NOT NULL, "Name" text NOT NULL, "Category" text NOT NULL DEFAULT '', "Description" text NOT NULL DEFAULT '',
@@ -394,11 +397,126 @@ using (var scope = app.Services.CreateScope())
         new MasterOption{Category="ISSUE_TYPE",Code="HV-ISO",Name="HV isolation failed",Value="Critical",Description="Stop work and perform HV diagnosis",SortOrder=60},
         new MasterOption{Category="ISSUE_TYPE",Code="BATT-TEMP",Name="Battery abnormal temperature",Value="Major",Description="Perform battery diagnostic",SortOrder=70},
         new MasterOption{Category="ISSUE_TYPE",Code="CONN-LOOSE",Name="Electrical connector loose",Value="Minor",Description="Secure or repair connector",SortOrder=80},
-        new MasterOption{Category="ISSUE_TYPE",Code="OTHER",Name="Other issue",Value="Minor",Description="Assess and define corrective work",SortOrder=90}
+        new MasterOption{Category="ISSUE_TYPE",Code="OTHER",Name="Other issue",Value="Minor",Description="Assess and define corrective work",SortOrder=90},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="FLUID_LEAK",Name="Oil / Fluid Leakage",Value="DIAG-LEAK",Description="Oil, coolant, hydraulic or other fluid leakage",SortOrder=10},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="BRAKE",Name="Brake Complaint",Value="DIAG-BRAKE",Description="Braking performance, noise, warning or leakage",SortOrder=20},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="CHARGING",Name="Charging Issue",Value="DIAG-CHARGING",Description="Charging failure, slow charging or connector issue",SortOrder=30},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="NO_START",Name="Vehicle Not Starting",Value="DIAG-NOSTART",Description="Vehicle will not power on or move",SortOrder=40},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="BATTERY_HV",Name="Battery / HV Warning",Value="DIAG-HV",Description="HV battery warning, isolation or thermal concern",SortOrder=50},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="STEERING",Name="Steering Complaint",Value="DIAG-STEER",Description="Steering effort, play, pull or vibration",SortOrder=60},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="NOISE_VIB",Name="Abnormal Noise / Vibration",Value="DIAG-NOISE",Description="Noise or vibration requiring diagnosis",SortOrder=70},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="TYRE_WHEEL",Name="Tyre / Wheel Complaint",Value="DIAG-TYRE",Description="Tyre pressure, damage, wear, wheel concern",SortOrder=80},
+        new MasterOption{Category="COMPLAINT_CATEGORY",Code="GENERAL",Name="Other / General",Value="DIAG-GENERAL",Description="General diagnosis when no specific template applies",SortOrder=90},
+        new MasterOption{Category="SYMPTOM",Code="LEAKAGE",Name="Leakage",Value="Leakage",Description="Visible or suspected fluid leakage",SortOrder=10},
+        new MasterOption{Category="SYMPTOM",Code="NOISE",Name="Noise",Value="Noise",Description="Abnormal sound",SortOrder=20},
+        new MasterOption{Category="SYMPTOM",Code="WARNING",Name="Warning Lamp / DTC",Value="Warning",Description="Warning lamp, fault or DTC",SortOrder=30},
+        new MasterOption{Category="SYMPTOM",Code="LOW_PERFORMANCE",Name="Low Performance",Value="Performance",Description="Reduced performance or efficiency",SortOrder=40},
+        new MasterOption{Category="SYMPTOM",Code="NO_START",Name="Not Starting",Value="No start",Description="Vehicle does not power on/start",SortOrder=50},
+        new MasterOption{Category="SYMPTOM",Code="OVERHEAT",Name="Overheating",Value="Overheating",Description="Abnormal thermal condition",SortOrder=60},
+        new MasterOption{Category="SYMPTOM",Code="VIBRATION",Name="Vibration",Value="Vibration",Description="Abnormal vibration",SortOrder=70},
+        new MasterOption{Category="SYMPTOM",Code="OTHER",Name="Other",Value="Other",Description="Other symptom",SortOrder=90}
     };
     foreach(var o in seedOptions)
         if(!await db.MasterOptions.AnyAsync(x=>x.Category==o.Category&&x.Code==o.Code)) db.MasterOptions.Add(o);
     await db.SaveChangesAsync();
+
+    async Task<WorkTemplate> EnsureDiagnosticTemplate(string code,string name,string description,params (string code,string label,string type,string options,string failAction)[] fields)
+    {
+        var wt=await db.WorkTemplates.FirstOrDefaultAsync(x=>x.TemplateCode==code);
+        if(wt is null)
+        {
+            wt=new WorkTemplate{TemplateCode=code,Name=name,Category="Diagnostic",Description=description,Version=1,StandardHours=0.5m,RequiredSkillCode="DIAG",RequiresQc=true,IsActive=true};
+            db.WorkTemplates.Add(wt);await db.SaveChangesAsync();
+        }
+        var seq=0;
+        foreach(var item in fields)
+        {
+            seq+=10;
+            if(!await db.WorkTemplateFields.AnyAsync(x=>x.WorkTemplateId==wt.Id&&x.FieldCode==item.code))
+                db.WorkTemplateFields.Add(new WorkTemplateField{WorkTemplateId=wt.Id,SectionName=name,Sequence=seq,FieldCode=item.code,Label=item.label,FieldType=item.type,Options=item.options,IsMandatory=true,FailureAction=item.failAction});
+        }
+        await db.SaveChangesAsync();
+        return wt;
+    }
+
+    await EnsureDiagnosticTemplate("DIAG-GENERAL","General Diagnosis","Fallback diagnostic checklist for any unplanned repair or breakdown",
+        ("GD-01","Confirm customer / driver complaint","OK/Not OK","OK;Not OK","None"),
+        ("GD-02","Record warning lamps / DTC / dashboard indication","Text","","None"),
+        ("GD-03","Visual vehicle condition and safety check","OK/Not OK","OK;Not OK","Create Defect"),
+        ("GD-04","Inspect for visible fluid leakage","OK/Not OK","OK;Not OK","Create Defect"),
+        ("GD-05","Diagnosis / finding","Text","","None"),
+        ("GD-06","Recommended corrective action","Text","","None"),
+        ("GD-07","Parts required?","Yes/No","Yes;No","None"),
+        ("GD-08","Photo / evidence reference","Photo","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-LEAK","Oil / Fluid Leak Diagnosis","Structured leak diagnosis for oil, coolant, hydraulic and other fluid complaints",
+        ("LK-01","Confirm leakage complaint","OK/Not OK","OK;Not OK","None"),
+        ("LK-02","Identify fluid / leak source","Text","","None"),
+        ("LK-03","Check fluid level / loss severity","Text","","None"),
+        ("LK-04","Inspect hose / pipe / seal / gasket condition","OK/Not OK","OK;Not OK","Create Defect"),
+        ("LK-05","Inspect joints, clamps and connections","OK/Not OK","OK;Not OK","Create Defect"),
+        ("LK-06","Check contamination / spread area","Text","","None"),
+        ("LK-07","Recommended repair","Text","","None"),
+        ("LK-08","Photo / evidence reference","Photo","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-BRAKE","Brake Diagnosis","Brake complaint diagnostic checklist",
+        ("BRD-01","Confirm brake complaint","OK/Not OK","OK;Not OK","None"),
+        ("BRD-02","Check warning lamp / DTC","Text","","None"),
+        ("BRD-03","Inspect pads / shoes / discs / drums","OK/Not OK","OK;Not OK","Create Defect"),
+        ("BRD-04","Inspect brake lines / hoses for leakage or damage","OK/Not OK","OK;Not OK","Create Defect"),
+        ("BRD-05","Check pedal / parking brake operation","OK/Not OK","OK;Not OK","Create Defect"),
+        ("BRD-06","Functional brake test finding","Text","","None"),
+        ("BRD-07","Recommended repair","Text","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-CHARGING","Charging System Diagnosis","Charging system complaint diagnostic checklist",
+        ("CHD-01","Confirm charging complaint","OK/Not OK","OK;Not OK","None"),
+        ("CHD-02","Inspect charge inlet and connector","OK/Not OK","OK;Not OK","Create Defect"),
+        ("CHD-03","Check connector pins / locking","OK/Not OK","OK;Not OK","Create Defect"),
+        ("CHD-04","Record charger / vehicle DTC","Text","","None"),
+        ("CHD-05","Charging communication result","Text","","None"),
+        ("CHD-06","Charging functional test","Pass/Fail","Pass;Fail","Create Defect"),
+        ("CHD-07","Check overheating / burning signs","OK/Not OK","OK;Not OK","Block Completion"));
+
+    await EnsureDiagnosticTemplate("DIAG-NOSTART","No-Start Diagnosis","Vehicle does not power on, start or move",
+        ("NS-01","Confirm no-start condition","OK/Not OK","OK;Not OK","None"),
+        ("NS-02","Check 12 V supply / terminals","OK/Not OK","OK;Not OK","Create Defect"),
+        ("NS-03","Check HV ready indication / interlock","OK/Not OK","OK;Not OK","Create Defect"),
+        ("NS-04","Record warning lamp / DTC","Text","","None"),
+        ("NS-05","Check key / start enable / safety interlocks","OK/Not OK","OK;Not OK","Create Defect"),
+        ("NS-06","Diagnosis / recommended action","Text","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-HV","Battery / HV Diagnosis","HV battery, isolation and thermal diagnostic checklist",
+        ("HV-01","Record battery warning / DTC","Text","","None"),
+        ("HV-02","Check SOC / battery status","Text","","None"),
+        ("HV-03","Check battery temperature / thermal warning","Text","","None"),
+        ("HV-04","Inspect HV cables / connectors","OK/Not OK","OK;Not OK","Create Defect"),
+        ("HV-05","Check isolation / insulation status","Pass/Fail","Pass;Fail","Block Completion"),
+        ("HV-06","Check coolant leakage / cooling condition","OK/Not OK","OK;Not OK","Create Defect"),
+        ("HV-07","Diagnosis / recommended action","Text","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-STEER","Steering Diagnosis","Steering effort, play, pull and vibration diagnosis",
+        ("ST-01","Confirm steering complaint","OK/Not OK","OK;Not OK","None"),
+        ("ST-02","Check steering free play / operation","OK/Not OK","OK;Not OK","Create Defect"),
+        ("ST-03","Inspect linkage / joints / mounting","OK/Not OK","OK;Not OK","Create Defect"),
+        ("ST-04","Inspect suspension components","OK/Not OK","OK;Not OK","Create Defect"),
+        ("ST-05","Check tyre pressure / uneven wear","OK/Not OK","OK;Not OK","Create Defect"),
+        ("ST-06","Road test / diagnosis finding","Text","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-NOISE","Noise / Vibration Diagnosis","Abnormal noise or vibration diagnostic checklist",
+        ("NV-01","Confirm complaint and operating condition","Text","","None"),
+        ("NV-02","Identify source area","Text","","None"),
+        ("NV-03","Inspect mounting / fasteners","OK/Not OK","OK;Not OK","Create Defect"),
+        ("NV-04","Inspect driveline / bearings / rotating parts","OK/Not OK","OK;Not OK","Create Defect"),
+        ("NV-05","Road / functional test finding","Text","","None"),
+        ("NV-06","Recommended action","Text","","None"));
+
+    await EnsureDiagnosticTemplate("DIAG-TYRE","Tyre / Wheel Diagnosis","Tyre, wheel, pressure, wear and alignment diagnosis",
+        ("TYD-01","Confirm tyre / wheel complaint","OK/Not OK","OK;Not OK","None"),
+        ("TYD-02","Check tyre pressure","Text","","None"),
+        ("TYD-03","Inspect tread / damage / sidewall","OK/Not OK","OK;Not OK","Create Defect"),
+        ("TYD-04","Inspect wheel / fasteners","OK/Not OK","OK;Not OK","Create Defect"),
+        ("TYD-05","Check abnormal / uneven wear","OK/Not OK","OK;Not OK","Create Defect"),
+        ("TYD-06","Alignment / vibration finding","Text","","None"));
 
     var montraTasks=new[]{
         new MaintenanceTaskDefinition{SectionName="Air / Brake System",TaskCode="BRK-01",TaskName="Brake lining / pad thickness",ActionCode="M",Specification="5–30 mm",Severity="Critical",UnitCode="mm",SuggestedIssueCode="BRK-PAD",SortOrder=10},
