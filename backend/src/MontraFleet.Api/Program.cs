@@ -1810,7 +1810,7 @@ app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck",asy
     Audit(db,"RECHECK","Checkpoint",fieldId,$"{f.FieldCode}:{r.Result}; {r.Remarks}",r.RecheckedBy);await db.SaveChangesAsync();return Results.Ok(new{passed,status=passed?"Closed":"Open"});
 });
 
-app.MapGet("/api/work-orders/{jobCardId:guid}/work-log",async(Guid jobCardId,AppDbContext db)=
+app.MapGet("/api/work-orders/{jobCardId:guid}/work-log",async(Guid jobCardId,AppDbContext db)=>
     Results.Ok(await db.WorkLogEntries.AsNoTracking().Where(x=>x.JobCardId==jobCardId).OrderByDescending(x=>x.CreatedAt).ToListAsync()));
 
 app.MapPost("/api/work-orders/{jobCardId:guid}/work-log",async(Guid jobCardId,WorkLogCreate r,AppDbContext db)=>
