@@ -1811,9 +1811,35 @@ app.MapGet("/api/documents/{vin}", async (string vin, AppDbContext db) =>
 app.MapGet("/api/search", async (string? q, AppDbContext db) =>
 {
     var term=(q??"").Trim().ToLower();
-    var vehicles=await db.Vehicles.AsNoTracking().Where(x=>term=="" || x.Vin.ToLower().Contains(term) || x.RegistrationNumber.ToLower().Contains(term)).Take(10)
-        .Select(x=>new { type="Vehicle",key=x.RegistrationNumber,title=x.Model+" · "+x.Vin,status=x.Status }).ToListAsync();
-    return Results.Ok(new { query=q??"", results=vehicles });
+    if(string.IsNullOrWhiteSpace(term)) return Results.Ok(new { query=q??"", results=Array.Empty<object>() });
+
+    var vehicles=await db.Vehicles.AsNoTracking()
+        .Where(x=>x.Vin.ToLower().Contains(term)||x.RegistrationNumber.ToLower().Contains(term)||x.Model.ToLower().Contains(term))
+        .Take(15)
+        .Select(x=>new { type="Vehicle",key=x.RegistrationNumber,title=x.Model+" · "+x.Vin,status=x.Status,url="/vehicle?id="+x.Id }).ToListAsync();
+
+    var workOrders=await (from j in db.JobCards.AsNoTracking()
+                          join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
+                          join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
+                          where j.JobCardNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)
+                          orderby j.StartedAt descending
+                          select new {type="Work Order",key=j.JobCardNumber,title=v.RegistrationNumber+" · "+e.EventType,status=j.Status,url="/service-workspace/"+j.Id}).Take(15).ToListAsync();
+
+    var events=await (from e in db.ServiceEvents.AsNoTracking()
+                      join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
+                      where e.EventNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)
+                      orderby e.OpenedAt descending
+                      select new {type="Service Event",key=e.EventNumber,title=v.RegistrationNumber+" · "+e.EventType,status=e.Status,url="/service"}).Take(10).ToListAsync();
+
+    var requests=await (from r in db.MaintenanceRequests.AsNoTracking()
+                        join v in db.Vehicles.AsNoTracking() on r.VehicleId equals v.Id
+                        where r.RequestNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)||r.Description.ToLower().Contains(term)
+                        orderby r.CreatedAt descending
+                        select new {type="Maintenance Request",key=r.RequestNumber,title=v.RegistrationNumber+" · "+r.Description,status=r.Status,url="/maintenance-requests"}).Take(10).ToListAsync();
+
+    var results=new List<object>();
+    results.AddRange(vehicles);results.AddRange(workOrders);results.AddRange(events);results.AddRange(requests);
+    return Results.Ok(new { query=q??"", results });
 });
 
 
