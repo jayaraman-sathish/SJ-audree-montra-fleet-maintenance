@@ -1686,7 +1686,7 @@ app.MapGet("/api/service-events/active", async (AppDbContext db) =>
                       from j in jj.DefaultIfEmpty()
                       where e.Status!="Closed"
                       orderby e.OpenedAt descending
-                      select new { e.Id,eventNo=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.Status,
+                      select new { e.Id,e.VehicleId,eventNo=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.Status,
                           breakdownId=e.BreakdownId,breakdownNumber=b!=null?b.BreakdownNumber:"",
                           complaint=b!=null?b.Complaint:"",reportedAt=b!=null?b.ReportedAt:(DateTime?)null,
                           breakdownLocation=b!=null?b.Location:"",dispatchMode=b!=null?b.DispatchMode:"",
@@ -2203,9 +2203,33 @@ app.MapGet("/api/vehicle360/{id:guid}", async (Guid id, AppDbContext db) =>
     var campaigns=await db.VehicleCampaigns.CountAsync(x=>x.VehicleId==id && x.Status!="Completed");
     var docs=await db.VehicleDocuments.CountAsync(x=>x.VehicleId==id && x.Status=="Active");
     var lastService=await db.ServiceEvents.AsNoTracking().Where(x=>x.VehicleId==id && x.ClosedAt!=null).OrderByDescending(x=>x.ClosedAt).Select(x=>x.ClosedAt).FirstOrDefaultAsync();
+    var appointment=await db.Appointments.AsNoTracking().Where(x=>x.VehicleId==id&&!new[]{"Completed","Cancelled","No-show"}.Contains(x.Status)).OrderByDescending(x=>x.StartAt).Select(x=>new{x.Id,x.AppointmentNumber,x.StartAt,x.ServiceCentre,x.Bay,x.Technician,x.Status,x.AppointmentType,x.Priority,x.Reason,x.PmObligationId}).FirstOrDefaultAsync();
+    var currentService=await(from e in db.ServiceEvents.AsNoTracking()
+        join j in db.JobCards.AsNoTracking() on e.Id equals j.ServiceEventId into jj from j in jj.DefaultIfEmpty()
+        join b in db.Breakdowns.AsNoTracking() on e.BreakdownId equals (Guid?)b.Id into bb from b in bb.DefaultIfEmpty()
+        where e.VehicleId==id&&e.Status!="Closed" orderby e.OpenedAt descending
+        select new{serviceEventId=e.Id,e.EventNumber,e.EventType,eventStatus=e.Status,e.OpenedAt,e.Priority,
+            jobCardId=j!=null?j.Id:(Guid?)null,jobCardNumber=j!=null?j.JobCardNumber:"",jobStatus=j!=null?j.Status:"",
+            bay=j!=null?j.Bay:"",technician=j!=null?j.Technician:"",complaint=b!=null?b.Complaint:"",
+            breakdownNumber=b!=null?b.BreakdownNumber:""}).FirstOrDefaultAsync();
+    object? serviceProgress=null;
+    if(currentService?.jobCardId is Guid currentJobId)
+    {
+        var tasksTotal=await db.WorkItems.CountAsync(x=>x.JobCardId==currentJobId);
+        var tasksCompleted=await db.WorkItems.CountAsync(x=>x.JobCardId==currentJobId&&x.Status=="Completed");
+        var openTaskIds=await db.WorkTemplateInstances.Where(x=>x.JobCardId==currentJobId).Select(x=>x.Id).ToListAsync();
+        var checksTotal=await db.WorkTemplateFieldInstances.CountAsync(x=>openTaskIds.Contains(x.WorkTemplateInstanceId));
+        var checksCompleted=await db.WorkTemplateFieldInstances.CountAsync(x=>openTaskIds.Contains(x.WorkTemplateInstanceId)&&x.Result!="Pending"&&x.Value!="");
+        var partsWaiting=await db.PartRequests.CountAsync(x=>x.JobCardId==currentJobId&&(x.Status=="Requested"||x.Status=="Awaiting Stock"));
+        var qc=await db.QcInspections.Where(x=>x.JobCardId==currentJobId).OrderByDescending(x=>x.InspectedAt).Select(x=>x.Result).FirstOrDefaultAsync()??"Pending";
+        var stage=string.IsNullOrWhiteSpace(currentService.technician)?"Awaiting Assignment":partsWaiting>0?"Parts Waiting":tasksCompleted<tasksTotal?"Work In Progress":checksCompleted<checksTotal?"Checks In Progress":qc!="Pass"?"QC Pending":"Ready for Release";
+        serviceProgress=new{currentService.serviceEventId,currentService.EventNumber,currentService.EventType,currentService.eventStatus,currentService.OpenedAt,currentService.Priority,currentService.jobCardId,currentService.jobCardNumber,currentService.jobStatus,currentService.bay,currentService.technician,currentService.complaint,currentService.breakdownNumber,stage,tasksTotal,tasksCompleted,checksTotal,checksCompleted,partsWaiting,qcStatus=qc};
+    }
+    var openRequests=await db.MaintenanceRequests.AsNoTracking().Where(x=>x.VehicleId==id&&x.Status!="Closed"&&x.Status!="Cancelled").OrderByDescending(x=>x.RequestedAt).Select(x=>new{x.Id,x.RequestNumber,x.RequestType,x.Description,x.Priority,x.Status,x.RequestedAt}).Take(10).ToListAsync();
+    var history=await(from e in db.ServiceEvents.AsNoTracking() join j in db.JobCards.AsNoTracking() on e.Id equals j.ServiceEventId into jj from j in jj.DefaultIfEmpty() where e.VehicleId==id orderby e.OpenedAt descending select new{e.Id,e.EventNumber,e.EventType,e.Status,e.OpenedAt,e.ClosedAt,jobCardId=j!=null?j.Id:(Guid?)null,jobCardNumber=j!=null?j.JobCardNumber:""}).Take(10).ToListAsync();
     return Results.Ok(new { v.Id,v.Vin,registration=v.RegistrationNumber,v.Model,v.Variant,availability=v.Status,v.OdometerKm,v.OperatingHours,v.BatterySoc,
         nextPm=nextPm==null?"-":(nextPm.DueDate.HasValue?nextPm.DueDate.Value.ToString("dd MMM yyyy"):(nextPm.DueReading?.ToString("0")+" km")),
-        openDefects=defects,activeWarranty=warranty,openCampaigns=campaigns,lastService=lastService,documents=docs });
+        openDefects=defects,activeWarranty=warranty,openCampaigns=campaigns,lastService=lastService,documents=docs,appointment,currentService=serviceProgress,openRequests,history });
 });
 
 app.MapGet("/api/checklists/{jobCardId:guid}", async (Guid jobCardId, AppDbContext db) =>
