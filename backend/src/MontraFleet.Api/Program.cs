@@ -1558,6 +1558,7 @@ app.MapPost("/api/appointments/{id:guid}/check-in", async (Guid id, CheckInReque
 
 async Task AddDiagnosticWorkAsync(AppDbContext db,JobCard jc,MaintenanceRequest mr,string priority)
 {
+    if(await db.WorkItems.AnyAsync(x=>x.JobCardId==jc.Id&&x.Description.StartsWith(mr.RequestNumber+" ·"))) return;
     var code=string.IsNullOrWhiteSpace(mr.DiagnosticTemplateCode)?"DIAG-GENERAL":mr.DiagnosticTemplateCode;
     var wt=await db.WorkTemplates.FirstOrDefaultAsync(x=>x.TemplateCode==code&&x.IsActive)
            ?? await db.WorkTemplates.FirstOrDefaultAsync(x=>x.TemplateCode=="DIAG-GENERAL"&&x.IsActive);
@@ -1573,11 +1574,24 @@ async Task AddDiagnosticWorkAsync(AppDbContext db,JobCard jc,MaintenanceRequest 
         foreach(var field in fields)
             db.WorkTemplateFieldInstances.Add(new WorkTemplateFieldInstance{WorkTemplateInstanceId=inst.Id,SourceTemplateFieldId=field.Id,SectionName=field.SectionName,Sequence=field.Sequence,
                 FieldCode=field.FieldCode,Label=field.Label,FieldType=field.FieldType,UnitCode=field.UnitCode,IsMandatory=field.IsMandatory,MinValue=field.MinValue,MaxValue=field.MaxValue,
-                Options=field.Options,FailureAction=field.FailureAction,SuggestedIssueCode=field.SuggestedIssueCode});
+                Options=field.Options,FailureAction=field.FailureAction,SuggestedIssueCode=field.SuggestedIssueCode,
+                ActionCode=field.FieldType=="Number"?"M":field.FieldType=="Pass/Fail"?"F":field.FieldType=="OK/Not OK"||field.FieldType=="Yes/No"?"I":"D"});
     }
     mr.JobCardId=jc.Id;
     mr.Status="Converted";
 }
+
+app.MapPost("/api/work-orders/{jobCardId:guid}/diagnosis/fallback", async (Guid jobCardId, AppDbContext db) =>
+{
+    var jc=await db.JobCards.FindAsync(jobCardId);if(jc is null)return Results.NotFound();
+    if(await db.WorkItems.AnyAsync(x=>x.JobCardId==jobCardId))return Results.Conflict(new{message="Work Order already has executable work."});
+    var evt=await db.ServiceEvents.FindAsync(jc.ServiceEventId);if(evt is null)return Results.BadRequest(new{message="Service event not found."});
+    var mr=await db.MaintenanceRequests.Where(x=>x.VehicleId==evt.VehicleId&&x.Status!="Cancelled").OrderByDescending(x=>x.RequestedAt).FirstOrDefaultAsync();
+    if(mr is null)mr=new MaintenanceRequest{RequestNumber="GENERAL-DIAG",VehicleId=evt.VehicleId,Description="General diagnosis / technician findings",ComplaintCategoryCode="GENERAL",SymptomCode="OTHER",DiagnosticTemplateCode="DIAG-GENERAL",Priority=evt.Priority};
+    await AddDiagnosticWorkAsync(db,jc,mr,evt.Priority);
+    await db.SaveChangesAsync();
+    return Results.Ok(new{message="General diagnostic checklist generated."});
+});
 
 app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbContext db) =>
 {
@@ -1746,7 +1760,7 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}/execution",async(Guid jobCar
     var items=await db.WorkItems.AsNoTracking().Where(x=>x.JobCardId==jobCardId).OrderBy(x=>x.TaskCode).ToListAsync();var ids=items.Select(x=>x.Id).ToList();
     var inst=await db.WorkTemplateInstances.AsNoTracking().Where(x=>x.JobCardId==jobCardId).ToListAsync();var instIds=inst.Select(x=>x.Id).ToList();
     var fields=await db.WorkTemplateFieldInstances.AsNoTracking().Where(x=>instIds.Contains(x.WorkTemplateInstanceId)).OrderBy(x=>x.Sequence).ToListAsync();var fieldIds=fields.Select(x=>x.Id).ToList();var issueIds=await db.Defects.AsNoTracking().Where(x=>x.ChecklistFieldInstanceId.HasValue&&fieldIds.Contains(x.ChecklistFieldInstanceId.Value)&&x.Disposition!="Closed").Select(x=>x.ChecklistFieldInstanceId!.Value).ToListAsync();
-    var sections=inst.Select(i=>{var wi=items.FirstOrDefault(x=>x.Id==i.WorkItemId);var fs=fields.Where(f=>f.WorkTemplateInstanceId==i.Id).Select(f=>new{f.Id,f.Sequence,f.FieldCode,f.Label,f.FieldType,f.ActionCode,f.Specification,f.Severity,f.UnitCode,f.IsMandatory,f.MinValue,f.MaxValue,f.Options,f.FailureAction,f.SuggestedIssueCode,f.Value,f.Result,f.Remarks,f.EvidenceReference,f.ExecutedAt,f.ExecutedBy,issueRecorded=issueIds.Contains(f.Id)});return new{workItemId=i.WorkItemId,taskCode=wi?.TaskCode??"",name=i.TemplateName,status=wi?.Status??i.Status,completed=fs.Count(x=>x.Result!="Pending"&&x.Value!=""),total=fs.Count(),fields=fs};});
+    var sections=inst.Select(i=>{var wi=items.FirstOrDefault(x=>x.Id==i.WorkItemId);var fs=fields.Where(f=>f.WorkTemplateInstanceId==i.Id).Select(f=>new{f.Id,f.Sequence,f.FieldCode,f.Label,f.FieldType,f.ActionCode,f.Specification,f.Severity,f.UnitCode,f.IsMandatory,f.MinValue,f.MaxValue,f.Options,f.FailureAction,f.SuggestedIssueCode,f.Value,f.Result,f.Remarks,f.EvidenceReference,f.ExecutedAt,f.ExecutedBy,issueRecorded=issueIds.Contains(f.Id)});return new{workItemId=i.WorkItemId,taskCode=wi?.TaskCode??"",workType=wi?.WorkType??"",description=wi?.Description??"",name=i.TemplateName,status=wi?.Status??i.Status,completed=fs.Count(x=>x.Result!="Pending"&&x.Value!=""),total=fs.Count(),fields=fs};});
     var corrective=items.Where(x=>x.WorkType=="Corrective Repair").Select(x=>new{x.Id,x.TaskCode,x.Description,x.Status,x.Priority,x.DependencyTaskId});return Results.Ok(new{sections,corrective});
 });
 app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck-pass",async(Guid workItemId,Guid fieldId,AppDbContext db)=>{var d=await db.Defects.FirstOrDefaultAsync(x=>x.ChecklistFieldInstanceId==fieldId&&x.Disposition!="Closed");if(d is null)return Results.NotFound(new{message="No open issue found."});if(d.CorrectiveWorkItemId.HasValue){var c=await db.WorkItems.FindAsync(d.CorrectiveWorkItemId.Value);if(c!=null&&c.Status!="Completed")return Results.Conflict(new{message="Complete the corrective work before recheck."});}d.Disposition="Closed";d.ClosedAt=DateTime.UtcNow;var f=await db.WorkTemplateFieldInstances.FindAsync(fieldId);if(f!=null){f.Result="Pass";f.Value=f.FieldType=="OK/Not OK"?"OK":"Pass";f.ExecutedAt=DateTime.UtcNow;}await db.SaveChangesAsync();return Results.Ok();});
