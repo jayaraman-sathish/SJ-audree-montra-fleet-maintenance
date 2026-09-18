@@ -1834,7 +1834,7 @@ app.MapGet("/api/search", async (string? q, AppDbContext db) =>
     var requests=await (from r in db.MaintenanceRequests.AsNoTracking()
                         join v in db.Vehicles.AsNoTracking() on r.VehicleId equals v.Id
                         where r.RequestNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)||r.Description.ToLower().Contains(term)
-                        orderby r.CreatedAt descending
+                        orderby r.RequestedAt descending
                         select new {type="Maintenance Request",key=r.RequestNumber,title=v.RegistrationNumber+" · "+r.Description,status=r.Status,url="/maintenance-requests"}).Take(10).ToListAsync();
 
     var results=new List<object>();
