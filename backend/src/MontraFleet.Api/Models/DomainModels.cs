@@ -241,6 +241,10 @@ public class Breakdown
 
 public class PartMaster
 {
+    public byte[] Photo {get;set;} = Array.Empty<byte>();
+    public string PhotoType {get;set;} = "image/png";
+    public string PhotoSource {get;set;} = "";
+    public string CatalogueReference {get;set;} = "";
     public Guid Id { get; set; } = Guid.NewGuid();
     public string PartNumber { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
@@ -298,6 +302,7 @@ public class PartRequest
 
 public class PartTransaction
 {
+    public string Reference {get;set;} = "";
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid? PartRequestId { get; set; }
     public Guid? PartMasterId { get; set; }

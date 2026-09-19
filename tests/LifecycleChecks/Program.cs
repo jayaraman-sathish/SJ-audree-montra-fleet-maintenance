@@ -158,3 +158,30 @@ await using(var qualityDb=new AppDbContext(new DbContextOptionsBuilder<AppDbCont
  var empty=await ControlEndpoints.QualityAsync(qualityDb,DateTime.UtcNow.AddDays(-1),DateTime.UtcNow,v.Id,null,null);
  Check(empty.FirstTimeFix==null,"No eligible releases reports unavailable, not 100 percent");
 }
+
+// Inventory balances: reserve, partial issue, return, consume, close short and reject excess.
+var inventory=new PartStock{OnHandQty=20};var requestBalance=new PartRequest{QuantityRequired=10};
+InventoryRules.Apply(inventory,requestBalance,"reserve",10);
+Check(inventory.OnHandQty==20&&inventory.ReservedQty==10,"Reservation does not reduce on-hand stock");
+var excess=false;try{InventoryRules.Apply(inventory,requestBalance,"reserve",1);}catch(InvalidOperationException){excess=true;}Check(excess&&inventory.ReservedQty==10,"Excess reservation rejected without balance change");
+InventoryRules.Apply(inventory,requestBalance,"issue",6);
+Check(inventory.OnHandQty==14&&inventory.ReservedQty==4&&InventoryRules.AtTechnician(requestBalance)==6,"Partial issue moves reserved stock to technician");
+InventoryRules.Apply(inventory,requestBalance,"consume",4);InventoryRules.Apply(inventory,requestBalance,"return",2);
+Check(inventory.OnHandQty==16&&InventoryRules.AtTechnician(requestBalance)==0&&!InventoryRules.Settled(requestBalance),"Partial return does not hide unissued requirement");
+InventoryRules.Apply(inventory,requestBalance,"cancel",0);
+Check(inventory.ReservedQty==0&&InventoryRules.Settled(requestBalance)&&requestBalance.QuantityConsumed==4,"Close remaining releases reservation and preserves consumption history");
+var full=new PartRequest{QuantityRequired=3};InventoryRules.Apply(inventory,full,"reserve",3);InventoryRules.Apply(inventory,full,"issue",3);InventoryRules.Apply(inventory,full,"consume",3);
+Check(InventoryRules.Settled(full)&&inventory.OnHandQty==13,"Consumption settles request without deducting stock twice");
+var extraConsume=false;try{InventoryRules.Apply(inventory,full,"consume",1);}catch(InvalidOperationException){extraConsume=true;}Check(extraConsume,"Cannot consume beyond issued balance");
+var negative=false;try{InventoryRules.Apply(inventory,new PartRequest{QuantityRequired=2},"reserve",-1);}catch(InvalidOperationException){negative=true;}Check(negative,"Negative movement rejected");
+Check(20-inventory.OnHandQty==requestBalance.QuantityConsumed+full.QuantityConsumed,"Store depletion equals net vehicle consumption after settlement");
+Check(InventoryRules.StockDelta(new PartTransaction{TransactionType="Stock Count",Quantity=-4})==-4,"Signed stock-count adjustment reconciles ledger");
+Console.WriteLine("Inventory accounting checks passed.");
+await using(var reportDb=new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options)){
+ var v=new Vehicle{RegistrationNumber="REPORT-TEST",ServiceCentreCode="CENTRE-1"};var e=new ServiceEvent{VehicleId=v.Id,Status="Closed",ClosedAt=DateTime.UtcNow};var j=new JobCard{ServiceEventId=e.Id,JobCardNumber="JC-REPORT"};var t=new WorkItem{JobCardId=j.Id,Description="Replace <unsafe> part",CompletionRemarks="Recorded repair",Status="Completed"};
+ reportDb.AddRange(v,e,j,t);reportDb.SaveChanges();await ServiceReports.CaptureAsync(reportDb,j.Id);
+ var snapshot=await reportDb.ServiceReportSnapshots.SingleAsync();Check(snapshot.Html.Contains("&lt;unsafe&gt;")&&!snapshot.Html.Contains("<unsafe>"),"Report encodes entered text");
+ Check(snapshot.Html.Contains("JC-REPORT")&&snapshot.Html.Contains("CENTRE-1")&&snapshot.Html.Contains("Recorded repair"),"Report includes job, centre and work performed");
+ var captured=snapshot.Html;t.CompletionRemarks="Later changed text";reportDb.SaveChanges();await ServiceReports.CaptureAsync(reportDb,j.Id);
+ Check((await reportDb.ServiceReportSnapshots.SingleAsync()).Html==captured,"Release snapshot is not silently regenerated after later record changes");
+}
