@@ -1,3 +1,4 @@
+import {FleetGridDirective} from '../../shared/fleet-grid.directive';
 import { Component, HostListener, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -10,7 +11,7 @@ import {
 } from './pm-program.helpers';
 
 @Component({
-  selector: 'app-pm-program-matrix', standalone: true, imports: [CommonModule, FormsModule],
+  selector: 'app-pm-program-matrix', standalone: true, imports:[FleetGridDirective,CommonModule, FormsModule],
   templateUrl: './pm-program-matrix.component.html',
   styleUrls: ['./pm-program-matrix.component.css']
 })

@@ -3,3 +3,42 @@ html,body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;col
 /* Consistent standalone date columns and labelled date fields. */
 .date-cell{min-width:132px;white-space:nowrap;vertical-align:top}.date-field{display:flex;flex-direction:column;gap:6px;margin:10px 0}.date-field>span{font-size:12px;color:#52647c}.card:has(>table){overflow-x:auto}th{white-space:nowrap}
 @media(max-width:800px){td.date-cell[data-label]::before{content:attr(data-label);display:block;font-size:12px;color:#52647c;margin-bottom:6px}}
+
+/* v1.8.9: shared spacing, table containment and labelled mobile records. */
+.shell main .record-action span{display:block;font-size:11px;color:#64748b;margin-bottom:4px}.shell main .record-action button{background:transparent;color:#145cb7;border:0;min-height:44px;padding:6px 0;text-decoration:underline;text-underline-offset:3px;font-size:12px}
+html{font-size:14px}body{line-height:1.45}button,a,input,select,textarea{touch-action:manipulation}
+:focus-visible{outline:3px solid #71aaff;outline-offset:3px}
+.shell main{min-width:0;overflow-wrap:break-word}.shell main .page{padding:24px;max-width:1800px;margin:0 auto}
+.shell main h2{font-size:24px;line-height:1.25;margin:0 0 10px}.shell main h3{font-size:17px;line-height:1.4}
+.shell main .title,.shell main .head{gap:16px;align-items:center;margin-bottom:18px}
+.shell main .title .btn{align-self:center;min-height:40px;height:auto}
+.shell main .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:8px 12px;line-height:1.3;white-space:nowrap;font-size:13px;text-decoration:none}
+.shell main input:not([type=checkbox]):not([type=radio]):not([type=file]),.shell main select,.shell main textarea{min-width:0;max-width:100%;font-size:13px;line-height:1.4}
+.shell main .grid>*,.shell main .filters>*,.shell main .form-grid>*,.shell main .fields>*{min-width:0}
+.shell main .card{min-width:0}.shell main .tabs{display:flex;flex-wrap:wrap;gap:6px}
+.fleet-grid-scroll{width:100%;max-width:100%;overflow:auto;overscroll-behavior-inline:contain;scrollbar-width:thin;scrollbar-color:#9cacc0 #eef2f7;border-radius:6px}
+.fleet-grid-scroll:focus-visible{outline-offset:-3px}
+.shell main table[fleetGrid]{table-layout:auto;width:100%;border-collapse:separate;border-spacing:0}
+.shell main table[fleetGrid] th{font-size:11px;font-weight:650;white-space:normal;min-width:75px;line-height:1.4;padding:12px 10px;background:#f6f8fb;border-bottom:1px solid #dbe4ef}
+.shell main table[fleetGrid] td{font-size:12px;line-height:1.5;padding:12px 10px;vertical-align:top}
+.shell main table[fleetGrid] .fleet-reference-cell{white-space:nowrap;min-width:115px}
+.shell main table[fleetGrid] .date-cell{min-width:114px}
+.shell main table[fleetGrid] .fleet-action-cell{position:sticky;right:0;z-index:2;background:#fff;box-shadow:-1px 0 #e5ebf3;min-width:115px}
+.shell main table[fleetGrid] .fleet-action-cell a,.shell main table[fleetGrid] .fleet-action-cell button{display:inline-flex;align-items:center;min-height:36px;max-width:100%;background:transparent!important;border:0!important;color:#145cb7!important;box-shadow:none!important;text-decoration:underline!important;text-underline-offset:3px;padding:6px 4px!important;line-height:1.4!important;font-size:12px!important;white-space:nowrap}
+.shell main table[fleetGrid] .fleet-action-cell button:disabled{color:#8492a4!important;cursor:not-allowed;text-decoration:none!important}
+.shell main table[fleetGrid] tr:hover>td{background-color:#f8fbff}
+.shell main table[fleetGrid] .fleet-action-cell .row-actions{gap:8px}
+.shell main .dialog,.shell main .modal-content{max-width:calc(100vw - 24px);max-height:calc(100dvh - 32px);overflow:auto}
+@media(max-width:1100px){
+ .shell main .page{padding:18px}.shell main h2{font-size:22px}
+ .shell main table.fleet-records{display:block!important;min-width:0!important;width:100%!important}
+ .shell main table.fleet-records thead,.shell main table.fleet-records .fleet-header-row{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;overflow:hidden!important;clip:rect(0,0,0,0);white-space:nowrap}
+ .shell main table.fleet-records tbody{display:grid!important;gap:12px}
+ .shell main table.fleet-records .fleet-data-row{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;border:1px solid #dce4ee!important;border-radius:10px!important;margin:0 0 12px!important;padding:10px!important;background:#fff}
+ .shell main table.fleet-records .fleet-data-row>td{display:block!important;position:static!important;min-width:0!important;max-width:none!important;border:0!important;box-shadow:none!important;padding:8px!important;white-space:normal!important}
+ .shell main table.fleet-records .fleet-data-row>td::before{content:attr(data-field)!important;display:block!important;font-size:11px!important;color:#64748b!important;font-weight:500!important;margin-bottom:5px!important}
+ .shell main table.fleet-records .fleet-data-row>.fleet-action-cell{grid-column:1/-1;border-top:1px solid #edf1f6!important;display:flex!important;align-items:center;gap:12px;flex-wrap:wrap}
+ .shell main table.fleet-records .fleet-data-row>.fleet-action-cell::before{width:100%}
+ .shell main table[fleetGrid] .fleet-action-cell a,.shell main table[fleetGrid] .fleet-action-cell button{min-height:44px}
+}
+@media(max-width:600px){.shell main .page{padding:14px}.shell main .title,.shell main .head{flex-wrap:wrap}.shell main .btn{min-height:44px}.shell main table.fleet-records .fleet-data-row{grid-template-columns:1fr!important}.shell main input:not([type=checkbox]):not([type=radio]),.shell main select,.shell main textarea{font-size:16px}.shell main .filters,.shell main .fields,.shell main .form-grid{grid-template-columns:1fr!important}.shell main .filters>*,.shell main .fields>*,.shell main .form-grid>*{grid-column:auto!important}.shell main .kpis{gap:8px}}
