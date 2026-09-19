@@ -11,6 +11,7 @@ public partial class AppDbContext
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         await SynchronizeChangedVisitsAsync(cancellationToken);
+        await MaintainControlStateAsync(cancellationToken);
         return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 

@@ -39,6 +39,7 @@ public static class ReleaseReadiness
             blockers.Add(new("Checklist", check.ItemCode, $"{check.ItemText}: complete or recheck this checklist item.", check.WorkItemId));
         if (await db.ServiceEvents.AnyAsync(x => x.VehicleId == visit.VehicleId && x.Id != visit.Id && x.Status != "Closed" && x.Status != "Cancelled"))
             blockers.Add(new("Service", visit.EventNumber, "Another active service exists for this vehicle. Resolve it before release."));
+        if(await db.OffHireRecords.AnyAsync(x=>x.VehicleId==visit.VehicleId&&x.Status=="Approved"))blockers.Add(new("Off-Hire",job.JobCardNumber,"Vehicle is off-hire. Complete recommissioning before release."));
         var canQc = !released && blockers.Count == 0;
         var qc = await db.QcInspections.AsNoTracking().Where(x => x.JobCardId == jobId).OrderByDescending(x => x.InspectedAt).FirstOrDefaultAsync();
         var allParts = await db.PartRequests.AsNoTracking().Where(x => x.JobCardId == jobId).ToListAsync();

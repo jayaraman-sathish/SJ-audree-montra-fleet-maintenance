@@ -104,3 +104,57 @@ foreach(var eventType in new[]{"PM","Breakdown","Maintenance"})
     gate=await ReleaseReadiness.ReadAsync(releaseDb,j.Id);
     Check(gate.Released&&!gate.CanRelease&&await ReleaseReadiness.TaskIsClosedAsync(releaseDb,t.Id),eventType+": released service cannot release or execute again");
 }
+
+// Control workflows: time calculations and invariants shared across intake types.
+var instant=new DateTime(2026,9,1,8,0,0,DateTimeKind.Utc);
+var clock=new SlaClock{StartedAt=instant,DueAt=instant.AddHours(2)};
+ControlRules.Pause(clock,instant.AddMinutes(30),"Waiting for authorization");
+Check(!ControlRules.Breached(clock,instant.AddHours(5)),"Paused SLA does not consume remaining target");
+ControlRules.Resume(clock,instant.AddHours(1));
+Check(clock.DueAt==instant.AddHours(2.5)&&clock.TotalPausedMinutes==30,"Resume extends target by actual pause duration");
+ControlRules.Stop(clock,instant.AddHours(2));
+Check(!ControlRules.Breached(clock,instant.AddDays(10)),"Stopped clock does not become breached later");
+var rejectedPause=false;try{ControlRules.Pause(clock,instant.AddHours(3),"Late pause");}catch(InvalidOperationException){rejectedPause=true;}
+Check(rejectedPause,"Cannot pause a stopped clock");
+var warranty=new WarrantyEntitlement{StartDate=instant.Date,EndDate=instant.Date.AddYears(1),OdometerLimitKm=50000};
+Check(ControlRules.Eligibility(warranty,instant,null)=="Reading required","Mileage warranty does not invent historical odometer");
+Check(ControlRules.Eligibility(warranty,instant,50000)=="Eligible"&&ControlRules.Eligibility(warranty,instant,50001)=="Mileage exceeded","Warranty mileage boundary");
+Check(ControlRules.Eligibility(warranty,warranty.EndDate.AddDays(1),100)=="Expired","Warranty date boundary");
+var periods=new[]{new VehicleAvailabilityLedger{StartAt=instant,State="Available"},new VehicleAvailabilityLedger{StartAt=instant.AddHours(2),EndAt=instant.AddHours(4),State="Under Maintenance"}};
+var duration=ControlRules.ObservedTime(periods,instant,instant.AddHours(6));
+Check(duration==(4d,2d),"Overlapping availability clips at transition; uncovered gaps stay unknown");
+var correction=new VehicleAvailabilityLedger{StartAt=instant,EndAt=instant.AddHours(2),State="Off-Hire",CorrectsLedgerId=periods[0].Id};
+Check(ControlRules.ObservedTime(periods.Append(correction),instant,instant.AddHours(6))==(4d,0d),"Availability correction supersedes original interval");
+await using(var controlDb=new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options)){
+ var v=new Vehicle{RegistrationNumber="CONTROL-TEST",OdometerKm=42000,Status="Under Maintenance"};
+ var e=new ServiceEvent{VehicleId=v.Id,AssignedSupervisor="Supervisor"};var j=new JobCard{ServiceEventId=e.Id};
+ var work=new WorkItem{JobCardId=j.Id,Status="Completed",UpdatedAt=instant};
+ var qc=new QcInspection{JobCardId=j.Id,Result="Pass",InspectedAt=DateTime.UtcNow.AddMinutes(1)};
+ var off=new OffHireRecord{VehicleId=v.Id,Status="Approved"};
+ var first=new VehicleAvailabilityLedger{VehicleId=v.Id,State="Available",StartAt=instant};
+ controlDb.AddRange(v,e,j,work,qc,off,first);await controlDb.SaveChangesAsync();
+ Check(e.OpenedOdometerKm==42000,"New service captures intake odometer for eligibility");
+ Check((await ReleaseReadiness.ReadAsync(controlDb,j.Id)).Blockers.Any(x=>x.Kind=="Off-Hire"),"Approved off-hire blocks vehicle release");
+ v.Status="Available";var transition=new VehicleAvailabilityLedger{VehicleId=v.Id,StartAt=instant.AddHours(1),State="Available"};controlDb.Add(transition);await controlDb.SaveChangesAsync();
+ Check(v.Status=="Off-Hire"&&transition.State=="Off-Hire","Other workflows cannot make an approved off-hire vehicle available");
+ Check(first.EndAt==transition.StartAt,"New transition closes previous open availability period");
+ off.Status="Closed";v.Status="Under Maintenance";await controlDb.SaveChangesAsync();
+ Check(v.Status=="Under Maintenance","Closing off-hire allows active service state");
+ var running=new SlaClock{ServiceEventId=e.Id,DueAt=DateTime.UtcNow.AddHours(2)};controlDb.Add(running);await controlDb.SaveChangesAsync();
+ e.Status="Closed";e.ClosedAt=DateTime.UtcNow;await controlDb.SaveChangesAsync();
+ Check(running.Status=="Stopped"&&running.StoppedAt.HasValue,"Closing service stops linked SLA");
+ var audits=await controlDb.AuditEvents.CountAsync();await controlDb.ReconcileControlsAsync();await controlDb.ReconcileControlsAsync();
+ Check(await controlDb.AuditEvents.CountAsync()==audits,"Control reconciliation is idempotent");
+}
+Console.WriteLine("Control rule checks passed (in-memory provider; PostgreSQL and browser checks remain separate).");
+await using(var qualityDb=new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options)){
+ var observed=DateTime.UtcNow.AddDays(-60);var v=new Vehicle{RegistrationNumber="FTF-TEST"};
+ var original=new ServiceEvent{VehicleId=v.Id,EventType="Breakdown",OpenedAt=observed.AddDays(-1),ClosedAt=observed,Status="Closed"};
+ var repeat=new ServiceEvent{VehicleId=v.Id,EventType="Maintenance",OpenedAt=observed.AddDays(2),Status="In Progress"};
+ var a=new JobCard{ServiceEventId=original.Id};var b=new JobCard{ServiceEventId=repeat.Id};
+ qualityDb.AddRange(v,original,repeat,a,b,new Defect{JobCardId=a.Id,FailureCode="AC-01"},new Defect{JobCardId=b.Id,FailureCode="ac-01"});qualityDb.SaveChanges();
+ var report=await ControlEndpoints.QualityAsync(qualityDb,observed.AddDays(-2),DateTime.UtcNow,v.Id,null,"Breakdown");
+ Check(report.RepeatFailures==1&&report.FirstTimeFix==0,"Repeat in another service type still counts against original cohort");
+ var empty=await ControlEndpoints.QualityAsync(qualityDb,DateTime.UtcNow.AddDays(-1),DateTime.UtcNow,v.Id,null,null);
+ Check(empty.FirstTimeFix==null,"No eligible releases reports unavailable, not 100 percent");
+}
