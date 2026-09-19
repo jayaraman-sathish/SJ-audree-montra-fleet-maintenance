@@ -105,6 +105,9 @@ public class Technician
 
 public class ServiceEvent
 {
+    public string AssignedSupervisor { get; set; } = "";
+    public DateTime? SupervisorAssignedAt { get; set; }
+
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid VehicleId { get; set; }
     public Guid? BreakdownId { get; set; }

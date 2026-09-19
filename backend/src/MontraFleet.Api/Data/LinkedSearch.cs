@@ -59,9 +59,10 @@ public static class LinkedSearch
                     work.Count == 0 ? "Work Not Generated" : work.Any(x => x.Status == "Pending Approval") ? "Approval Pending" :
                     waiting > 0 ? "Parts Waiting" : work.Any(x => x.Status == "In Progress") ? "Work In Progress" :
                     work.Any(x => x.Status == "On Hold") ? "On Hold" : completed < work.Count ?
-                    work.Any(x => x.AssignedToTechnicianId.HasValue) || job.TechnicianId.HasValue ? "Assigned / Work Pending" : "Awaiting Assignment" :
+                    work.Any(x => x.AssignedToTechnicianId.HasValue) || job.TechnicianId.HasValue ? "Assigned / Work Pending" : "Technician Allocation Pending" :
                     qcStatus == "Pass" ? "Ready for Release Review" : "QC Pending";
                 cards.Add(new { id = job.Id, number = job.JobCardNumber, status = job.Status, stage,
+                    assignedSupervisor = e.AssignedSupervisor, supervisorAssignedAt = e.SupervisorAssignedAt,
                     engineer = string.IsNullOrWhiteSpace(job.Technician) ? "Unassigned" : job.Technician,
                     taskEngineers = work.Select(x => x.AssignedTo).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToArray(),
                     bay = string.IsNullOrWhiteSpace(job.Bay) ? "Not assigned" : job.Bay,

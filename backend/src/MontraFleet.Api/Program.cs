@@ -46,6 +46,8 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.EnsureCreatedAsync();
     await db.Database.ExecuteSqlRawAsync("""
+        ALTER TABLE IF EXISTS "ServiceEvents" ADD COLUMN IF NOT EXISTS "AssignedSupervisor" text NOT NULL DEFAULT '';
+        ALTER TABLE IF EXISTS "ServiceEvents" ADD COLUMN IF NOT EXISTS "SupervisorAssignedAt" timestamptz NULL;
         CREATE TABLE IF NOT EXISTS "MasterOptions" (
           "Id" uuid PRIMARY KEY, "Category" text NOT NULL, "Code" text NOT NULL, "Name" text NOT NULL,
           "Value" text NOT NULL DEFAULT '', "Description" text NOT NULL DEFAULT '', "SortOrder" integer NOT NULL DEFAULT 0, "IsActive" boolean NOT NULL DEFAULT true);
@@ -890,7 +892,7 @@ app.MapGet("/api/dashboard/summary", async (AppDbContext db) =>
     var appointments = await db.Appointments.CountAsync(x => x.StartAt >= today && x.StartAt < tomorrow);
     var breakdowns = await db.Breakdowns.CountAsync(x => x.Status != "Closed");
     var pmOverdue = await db.PmObligations.CountAsync(x => x.Status == "Overdue");
-    var activeServices=await (from e in db.ServiceEvents.AsNoTracking() join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id join j0 in db.JobCards.AsNoTracking() on e.Id equals j0.ServiceEventId into jj from j in jj.DefaultIfEmpty() where e.Status!="Closed" orderby e.OpenedAt descending select new{eventNumber=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,status=e.Status,openedAt=e.OpenedAt,jobCard=j!=null?j.JobCardNumber:"",technician=j!=null?j.Technician:"",bay=j!=null?j.Bay:""}).Take(8).ToListAsync();
+    var activeServices=await (from e in db.ServiceEvents.AsNoTracking() join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id join j0 in db.JobCards.AsNoTracking() on e.Id equals j0.ServiceEventId into jj from j in jj.DefaultIfEmpty() where e.Status!="Closed" orderby e.OpenedAt descending select new{eventNumber=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.AssignedSupervisor,e.SupervisorAssignedAt,status=e.Status,openedAt=e.OpenedAt,jobCard=j!=null?j.JobCardNumber:"",technician=j!=null?j.Technician:"",bay=j!=null?j.Bay:""}).Take(8).ToListAsync();
     var openTasks=await db.WorkItems.CountAsync(x=>x.Status!="Completed"&&x.Status!="Cancelled");
     var unassignedTasks=await db.WorkItems.CountAsync(x=>x.Status!="Completed"&&x.Status!="Cancelled"&&!x.AssignedToTechnicianId.HasValue);
     var dueSoon=await db.PmObligations.CountAsync(x=>x.Status=="Due"||x.Status=="Due Soon");
@@ -1475,7 +1477,7 @@ app.MapGet("/api/pm/due-board",async(AppDbContext db)=>
     foreach(var o in obs){if(!vehicles.TryGetValue(o.VehicleId,out var v))continue;MaintenancePlan? p=null;if(o.MaintenancePlanId.HasValue)plans.TryGetValue(o.MaintenancePlanId.Value,out p);var ts=o.MaintenancePlanId.HasValue?triggers.Where(x=>x.MaintenancePlanId==o.MaintenancePlanId.Value).ToList():new List<MaintenancePlanTrigger>();var pieces=new List<string>();var duePieces=new List<string>();var remPieces=new List<string>();var overdue=false;var due=false;var soon=false;
         foreach(var t in ts){switch(t.TriggerCode.ToUpperInvariant()){case "ODOMETER":if(o.DueReading.HasValue){var r=o.DueReading.Value-v.OdometerKm;pieces.Add("Odometer");duePieces.Add($"{o.DueReading:0} km");remPieces.Add($"{r:0} km");overdue|=r<0;due|=r==0;soon|=r>0&&r<=t.WarningValue;}break;case "OPERATING_HOURS":if(o.DueOperatingHours.HasValue){var r=o.DueOperatingHours.Value-v.OperatingHours;pieces.Add("Hours");duePieces.Add($"{o.DueOperatingHours:0} hr");remPieces.Add($"{r:0} hr");overdue|=r<0;due|=r==0;soon|=r>0&&r<=t.WarningValue;}break;case "KWH":if(o.DueEnergyKwh.HasValue){var r=o.DueEnergyKwh.Value-v.EnergyKwh;pieces.Add("kWh");duePieces.Add($"{o.DueEnergyKwh:0} kWh");remPieces.Add($"{r:0} kWh");overdue|=r<0;due|=r==0;soon|=r>0&&r<=t.WarningValue;}break;case "TIME":if(o.DueDate.HasValue){var r=(o.DueDate.Value.Date-DateTime.UtcNow.Date).Days;pieces.Add("Time");duePieces.Add(o.DueDate.Value.ToString("dd MMM yyyy"));remPieces.Add($"{r} days");overdue|=r<0;due|=r==0;soon|=r>0&&r<=t.WarningValue;}break;}}
         var calc=overdue?"Overdue":due?"Due":soon?"Due Soon":"Upcoming";if(o.Status is "Planned" or "In Service")calc=o.Status;if(o.Status!=calc){o.Status=calc;}
-        result.Add(new{o.Id,o.VehicleId,vehicle=v.RegistrationNumber,model=v.Model,variant=v.Variant,imageUrl=v.ImageUrl,plan=p?.PlanCode??o.PlanCode,planName=p?.Name??o.PlanCode,trigger=pieces.Count>0?string.Join(" / ",pieces):o.TriggerType,current=$"{v.OdometerKm:0} km · {v.OperatingHours:0} hr · {v.EnergyKwh:0} kWh",due=string.Join(" · ",duePieces),remaining=string.Join(" · ",remPieces),status=calc});}
+        result.Add(new{o.Id,o.VehicleId,vehicle=v.RegistrationNumber,model=v.Model,variant=v.Variant,imageUrl=v.ImageUrl,plan=p?.PlanCode??o.PlanCode,planName=p?.Name??o.PlanCode,trigger=pieces.Count>0?string.Join(" / ",pieces):o.TriggerType,current=$"{v.OdometerKm:0} km · {v.OperatingHours:0} hr · {v.EnergyKwh:0} kWh",due=string.Join(" · ",duePieces),dueDate=o.DueDate,dueReadingDisplay=string.Join(" · ",duePieces.Where(x=>!x.Contains(o.DueDate.HasValue?o.DueDate.Value.ToString("dd MMM yyyy"):"__NO_DATE__"))),remaining=string.Join(" · ",remPieces),status=calc});}
     await db.SaveChangesAsync();return Results.Ok(result);
 });
 app.MapGet("/api/pm/history",async(AppDbContext db)=>
@@ -1699,7 +1701,7 @@ app.MapGet("/api/service-events/active", async (AppDbContext db) =>
                       from j in jj.DefaultIfEmpty()
                       where e.Status!="Closed"
                       orderby e.OpenedAt descending
-                      select new { e.Id,e.VehicleId,eventNo=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.Status,
+                      select new { e.Id,e.VehicleId,eventNo=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.AssignedSupervisor,e.SupervisorAssignedAt,e.Status,e.OpenedAt,
                           breakdownId=e.BreakdownId,breakdownNumber=b!=null?b.BreakdownNumber:"",
                           complaint=b!=null?b.Complaint:"",reportedAt=b!=null?b.ReportedAt:(DateTime?)null,
                           breakdownLocation=b!=null?b.Location:"",dispatchMode=b!=null?b.DispatchMode:"",
@@ -1714,7 +1716,7 @@ app.MapGet("/api/job-cards", async (AppDbContext db) =>
                       join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
                       join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
                       orderby j.StartedAt descending
-                      select new { j.Id,j.JobCardNumber,j.Status,j.Bay,j.Technician,j.TechnicianId,j.StartedAt,j.CompletedAt,serviceEventId=e.Id,e.EventNumber,vehicle=v.RegistrationNumber }).ToListAsync();
+                      select new { j.Id,j.JobCardNumber,j.Status,j.Bay,j.Technician,j.TechnicianId,j.StartedAt,j.CompletedAt,serviceEventId=e.Id,e.AssignedSupervisor,e.SupervisorAssignedAt,e.EventNumber,vehicle=v.RegistrationNumber }).ToListAsync();
     return Results.Ok(rows);
 });
 
@@ -1778,6 +1780,29 @@ app.MapPut("/api/tasks/{id:guid}/assign", async (Guid id, TaskAssignRequest r, A
     Audit(db,"ASSIGN","Task",t.Id,$"{t.TaskCode}->{tech.Name}");await db.SaveChangesAsync();return Results.Ok(t);
 });
 
+app.MapPut("/api/job-cards/{id:guid}/supervisor", async (Guid id, SupervisorAssignmentRequest r, AppDbContext db) =>
+{
+    var name = r.SupervisorName?.Trim();
+    if (string.IsNullOrWhiteSpace(name) || name.Length > 120)
+        return Results.BadRequest(new { message = "Enter the assigned supervisor name (maximum 120 characters)." });
+    var job = await db.JobCards.FindAsync(id);
+    if (job is null) return Results.NotFound();
+    var service = await db.ServiceEvents.FindAsync(job.ServiceEventId);
+    if (service is null) return Results.NotFound();
+    if (service.Status is "Closed" or "Cancelled")
+        return Results.Conflict(new { message = "A released or cancelled service cannot be reassigned." });
+    if (service.AssignedSupervisor == name) return Results.Ok(service);
+    var previous = service.AssignedSupervisor;
+    service.AssignedSupervisor = name;
+    service.SupervisorAssignedAt = DateTime.UtcNow;
+    db.WorkLogEntries.Add(new WorkLogEntry { JobCardId = id, EntryType = "Supervisor Assignment",
+        Comment = $"Assigned supervisor: {(string.IsNullOrWhiteSpace(previous) ? "Unassigned" : previous)} -> {name}",
+        CreatedBy = "Service User", CreatedRole = "Assignment" });
+    Audit(db, "ASSIGN_SUPERVISOR", "JobCard", id, $"Supervisor: {previous} -> {name}");
+    await db.SaveChangesAsync();
+    return Results.Ok(service);
+});
+
 app.MapPut("/api/job-cards/{id:guid}/assign", async (Guid id, JobCardAssignRequest r, AppDbContext db) =>
 {
     var jc=await db.JobCards.FindAsync(id);if(jc is null)return Results.NotFound();
@@ -1795,10 +1820,9 @@ app.MapPut("/api/job-cards/{id:guid}/assign", async (Guid id, JobCardAssignReque
         var tasks=await db.WorkItems.Where(x=>x.JobCardId==id&&x.Status!="Completed"&&x.Status!="Cancelled"&&x.Status!="Pending Approval").ToListAsync();
         foreach(var task in tasks){task.AssignedToTechnicianId=tech.Id;task.AssignedTo=tech.Name;if(task.Status=="Not Started")task.Status="Assigned";task.UpdatedAt=DateTime.UtcNow;}
     }
-    var evt=await db.ServiceEvents.FindAsync(jc.ServiceEventId);if(evt is not null&&tech is not null&&evt.Status=="Awaiting Assignment")evt.Status="Assigned";
-    if(tech is not null&&jc.Status=="Open")jc.Status="Assigned";
+    // Technician allocation does not assign the main request.
     var by=string.IsNullOrWhiteSpace(r.AssignedBy)?"Service Supervisor":r.AssignedBy.Trim();
-    db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=id,EntryType="Work Order Assigned",Comment=$"Technician: {jc.Technician}; Bay: {jc.Bay}",CreatedBy=by,CreatedRole="Supervisor"});
+    db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=id,EntryType="Internal Technician Allocation",Comment=$"Technician: {jc.Technician}; Bay: {jc.Bay}",CreatedBy=by,CreatedRole="Supervisor"});
     Audit(db,"ASSIGN","JobCard",jc.Id,$"{jc.JobCardNumber}->{jc.Technician}; bay={jc.Bay}",by);await db.SaveChangesAsync();return Results.Ok(jc);
 });
 
@@ -1834,7 +1858,7 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}", async (Guid jobCardId, App
 {
     var data=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
                     join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id where j.Id==jobCardId
-                    select new{jobCardId=j.Id,j.JobCardNumber,j.Status,j.Bay,j.Technician,j.TechnicianId,serviceEventId=e.Id,e.EventNumber,e.EventType,e.Priority,eventStatus=e.Status,e.BreakdownId,
+                    select new{jobCardId=j.Id,j.JobCardNumber,j.Status,j.Bay,j.Technician,j.TechnicianId,serviceEventId=e.Id,e.AssignedSupervisor,e.SupervisorAssignedAt,e.EventNumber,e.EventType,e.Priority,eventStatus=e.Status,e.BreakdownId,
                         vehicleId=v.Id,vehicle=v.RegistrationNumber,v.Vin,v.Model,v.OdometerKm,v.OperatingHours}).FirstOrDefaultAsync();
     if(data is null)return Results.NotFound();
     var breakdown=data.BreakdownId.HasValue?await db.Breakdowns.AsNoTracking().Where(x=>x.Id==data.BreakdownId.Value)
@@ -2126,6 +2150,7 @@ app.MapGet("/api/breakdowns", async (AppDbContext db) =>
                     from j in jj.DefaultIfEmpty()
                     orderby b.ReportedAt descending
                     select new { b.Id,b.BreakdownNumber,b.VehicleId,vehicle=v.RegistrationNumber,b.Priority,b.Location,b.Complaint,b.TriageDecision,b.DispatchMode,b.Status,b.ReportedAt,
+                        assignedSupervisor=e!=null?e.AssignedSupervisor:"",supervisorAssignedAt=e!=null?e.SupervisorAssignedAt:null,
                         serviceEventId=e!=null?e.Id:(Guid?)null,serviceEventNumber=e!=null?e.EventNumber:"",serviceStatus=e!=null?e.Status:"",
                         jobCardId=j!=null?j.Id:(Guid?)null,jobCardNumber=j!=null?j.JobCardNumber:"",bay=j!=null?j.Bay:"",technician=j!=null?j.Technician:"",technicianId=j!=null?j.TechnicianId:null }).ToListAsync();
     return Results.Ok(rows);
@@ -2142,7 +2167,7 @@ app.MapPost("/api/breakdowns/{id:guid}/convert", async (Guid id, BreakdownConver
     var b=await db.Breakdowns.FindAsync(id); if(b is null) return Results.NotFound();
     if (await db.ServiceEvents.AnyAsync(x=>x.BreakdownId==id)) return Results.Conflict(new { message="Already converted." });
     Technician? tech=null;if(r.TechnicianId.HasValue){tech=await db.Technicians.FindAsync(r.TechnicianId.Value);if(tech is null||!tech.IsActive)return Results.BadRequest(new{message="Select an active technician."});}
-    var e=new ServiceEvent { VehicleId=b.VehicleId, BreakdownId=b.Id, EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}", EventType="Breakdown", Priority=b.Priority, Status=tech is null?"Awaiting Assignment":"Assigned" };
+    var e=new ServiceEvent { VehicleId=b.VehicleId, BreakdownId=b.Id, EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}", EventType="Breakdown", Priority=b.Priority, Status="Awaiting Assignment" };
     var j=new JobCard { ServiceEventId=e.Id, JobCardNumber=$"JC-{DateTime.UtcNow:yyyy}-{(await db.JobCards.CountAsync()+1):D6}", Status="Open",Bay=r.Bay?.Trim()??"",TechnicianId=tech?.Id,Technician=tech?.Name??"",StartedAt=null };
     b.Status="Converted";b.ResponseAt??=DateTime.UtcNow;db.ServiceEvents.Add(e);db.JobCards.Add(j);
     if(r.GenerateGeneralDiagnosis!=false)
@@ -2220,7 +2245,7 @@ app.MapGet("/api/vehicle360/{id:guid}", async (Guid id, AppDbContext db) =>
         join j in db.JobCards.AsNoTracking() on e.Id equals j.ServiceEventId into jj from j in jj.DefaultIfEmpty()
         join b in db.Breakdowns.AsNoTracking() on e.BreakdownId equals (Guid?)b.Id into bb from b in bb.DefaultIfEmpty()
         where e.VehicleId==id&&e.Status!="Closed" orderby e.OpenedAt descending
-        select new{serviceEventId=e.Id,e.EventNumber,e.EventType,eventStatus=e.Status,e.OpenedAt,e.Priority,
+        select new{serviceEventId=e.Id,e.AssignedSupervisor,e.SupervisorAssignedAt,e.EventNumber,e.EventType,eventStatus=e.Status,e.OpenedAt,e.Priority,
             jobCardId=j!=null?j.Id:(Guid?)null,jobCardNumber=j!=null?j.JobCardNumber:"",jobStatus=j!=null?j.Status:"",
             bay=j!=null?j.Bay:"",technician=j!=null?j.Technician:"",complaint=b!=null?b.Complaint:"",
             breakdownNumber=b!=null?b.BreakdownNumber:""}).FirstOrDefaultAsync();
@@ -2234,8 +2259,8 @@ app.MapGet("/api/vehicle360/{id:guid}", async (Guid id, AppDbContext db) =>
         var checksCompleted=await db.WorkTemplateFieldInstances.CountAsync(x=>openTaskIds.Contains(x.WorkTemplateInstanceId)&&x.Result!="Pending"&&x.Value!="");
         var partsWaiting=await db.PartRequests.CountAsync(x=>x.JobCardId==currentJobId&&(x.Status=="Requested"||x.Status=="Awaiting Stock"));
         var qc=await db.QcInspections.Where(x=>x.JobCardId==currentJobId).OrderByDescending(x=>x.InspectedAt).Select(x=>x.Result).FirstOrDefaultAsync()??"Pending";
-        var stage=string.IsNullOrWhiteSpace(currentService.technician)?"Awaiting Assignment":partsWaiting>0?"Parts Waiting":tasksCompleted<tasksTotal?"Work In Progress":checksCompleted<checksTotal?"Checks In Progress":qc!="Pass"?"QC Pending":"Ready for Release";
-        serviceProgress=new{currentService.serviceEventId,currentService.EventNumber,currentService.EventType,currentService.eventStatus,currentService.OpenedAt,currentService.Priority,currentService.jobCardId,currentService.jobCardNumber,currentService.jobStatus,currentService.bay,currentService.technician,currentService.complaint,currentService.breakdownNumber,stage,tasksTotal,tasksCompleted,checksTotal,checksCompleted,partsWaiting,qcStatus=qc};
+        var stage=currentService.eventStatus=="Awaiting Assignment"?"Awaiting Assignment":currentService.eventStatus=="Assigned"?"Assigned":partsWaiting>0?"Parts Waiting":tasksCompleted<tasksTotal?"Work In Progress":checksCompleted<checksTotal?"Checks In Progress":qc!="Pass"?"QC Pending":"Ready for Release";
+        serviceProgress=new{currentService.serviceEventId,currentService.AssignedSupervisor,currentService.SupervisorAssignedAt,currentService.EventNumber,currentService.EventType,currentService.eventStatus,currentService.OpenedAt,currentService.Priority,currentService.jobCardId,currentService.jobCardNumber,currentService.jobStatus,currentService.bay,currentService.technician,currentService.complaint,currentService.breakdownNumber,stage,tasksTotal,tasksCompleted,checksTotal,checksCompleted,partsWaiting,qcStatus=qc};
     }
     var openRequests=await db.MaintenanceRequests.AsNoTracking().Where(x=>x.VehicleId==id&&x.Status!="Closed"&&x.Status!="Cancelled").OrderByDescending(x=>x.RequestedAt).Select(x=>new{x.Id,x.RequestNumber,x.RequestType,x.Description,x.Priority,x.Status,x.RequestedAt}).Take(10).ToListAsync();
     var history=await(from e in db.ServiceEvents.AsNoTracking() join j in db.JobCards.AsNoTracking() on e.Id equals j.ServiceEventId into jj from j in jj.DefaultIfEmpty() where e.VehicleId==id orderby e.OpenedAt descending select new{e.Id,e.EventNumber,e.EventType,e.Status,e.OpenedAt,e.ClosedAt,jobCardId=j!=null?j.Id:(Guid?)null,jobCardNumber=j!=null?j.JobCardNumber:""}).Take(10).ToListAsync();
@@ -2429,7 +2454,7 @@ app.MapPost("/api/work-orders/from-requests", async (CreateWorkOrderRequest r,Ap
 app.MapGet("/api/work-orders", async (AppDbContext db)=>
 {
     var rows=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
-        orderby j.StartedAt descending select new{j.Id,workOrderNumber=j.JobCardNumber,vehicle=v.RegistrationNumber,e.VehicleId,e.EventNumber,e.EventType,e.Priority,j.Status,j.Bay,j.Technician,j.StartedAt,j.CompletedAt,
+        orderby j.StartedAt descending select new{j.Id,workOrderNumber=j.JobCardNumber,vehicle=v.RegistrationNumber,e.VehicleId,e.EventNumber,e.EventType,e.Priority,e.AssignedSupervisor,e.SupervisorAssignedAt,j.Status,j.Bay,j.Technician,j.StartedAt,j.CompletedAt,e.OpenedAt,
         requestCount=db.MaintenanceRequests.Count(r=>r.JobCardId==j.Id),taskCount=db.WorkItems.Count(t=>t.JobCardId==j.Id),openDefects=db.Defects.Count(d=>d.JobCardId==j.Id&&d.Disposition!="Closed")}).ToListAsync();return Results.Ok(rows);
 });
 
@@ -2547,6 +2572,7 @@ record TaskRequest(Guid JobCardId,string WorkType,string Description,Guid? Assig
     Guid? DependencyTaskId,decimal? EstimatedHours,bool RequiresQc,bool RequiresHvAuthorization);
 record TaskStatusRequest(string Status,decimal? ActualHours,string? CompletionRemarks,string? EvidenceReference);
 record TaskAssignRequest(Guid TechnicianId);
+record SupervisorAssignmentRequest(string SupervisorName);
 record JobCardAssignRequest(Guid? TechnicianId,string? Bay,bool AssignOpenTasks,string AssignedBy);
 record WorkApprovalRequest(string ApprovedBy,string Remarks);
 record WorkLogCreate(Guid? WorkItemId,Guid? ChecklistFieldInstanceId,string EntryType,string Comment,string CreatedBy,string CreatedRole);

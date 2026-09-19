@@ -39,8 +39,9 @@ public partial class AppDbContext
             var taskTransition = changedTasks.Any(x => x.Entity.JobCardId == id && x.Property(t => t.Status).IsModified);
             await WorkItems.Where(x => x.JobCardId == id).LoadAsync(ct);
             var tasks = WorkItems.Local.Where(x => x.JobCardId == id && Entry(x).State != EntityState.Deleted).ToList();
-            var state = LifecycleRules.Resolve(service.Status, job.Status, tasks.Select(x => x.Status).ToArray(),
-                job.TechnicianId.HasValue || tasks.Any(x => x.AssignedToTechnicianId.HasValue), taskTransition);
+            var state = LifecycleRules.Resolve(Entry(service).State == EntityState.Added ? "Open" : service.Status,
+                Entry(job).State == EntityState.Added ? "Open" : job.Status, tasks.Select(x => x.Status).ToArray(),
+                !string.IsNullOrWhiteSpace(service.AssignedSupervisor), taskTransition);
             var oldEvent = Entry(service).State == EntityState.Added ? "New" : Entry(service).Property(x => x.Status).OriginalValue;
             var oldJob = Entry(job).State == EntityState.Added ? "New" : Entry(job).Property(x => x.Status).OriginalValue;
             service.Status = state.Service;
@@ -66,11 +67,11 @@ public partial class AppDbContext
     public async Task ReconcileVisitStatusesAsync(CancellationToken ct = default)
     {
         var pairs = await (from j in JobCards join e in ServiceEvents on j.ServiceEventId equals e.Id
-            where j.Status != e.Status && !(e.Status == "Closed" && j.Status == "Completed")
+            where e.Status != "Closed" && e.Status != "Cancelled"
             select new { Job = j, Service = e }).ToListAsync(ct);
         foreach (var pair in pairs)
         {
-            var state = LifecycleRules.Resolve(pair.Service.Status, pair.Job.Status, Array.Empty<string>(), pair.Job.TechnicianId.HasValue, false);
+            var state = LifecycleRules.Resolve(pair.Service.Status, pair.Job.Status, Array.Empty<string>(), !string.IsNullOrWhiteSpace(pair.Service.AssignedSupervisor), false);
             pair.Service.Status = state.Service;
             pair.Job.Status = state.Job;
         }

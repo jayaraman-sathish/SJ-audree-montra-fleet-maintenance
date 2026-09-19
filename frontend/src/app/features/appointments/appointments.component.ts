@@ -1,10 +1,11 @@
+import { FleetDateComponent } from '../../shared/fleet-date.component';
 import {Component,OnInit} from '@angular/core';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {HttpClient} from '@angular/common/http';
 import {Router} from '@angular/router';
 
-@Component({selector:'app-appointments',standalone:true,imports:[CommonModule,FormsModule],template:`
+@Component({selector:'app-appointments',standalone:true,imports:[FleetDateComponent,CommonModule,FormsModule],template:`
 <section class="page">
 <div class="title"><div><h2>Appointments & Capacity</h2><p>Appointment = when and where the vehicle will visit. PM appointments originate from PM Obligations.</p></div><button type="button" class="btn btn-primary" (click)="openCreate()">+ Appointment</button></div>
 <div class="info"><b>Planned PM:</b> schedule from <b>PM Obligations</b>. Repair/inspection/campaign visits can be created here. Technician/team assignment happens after check-in.</div>
@@ -30,7 +31,7 @@ import {Router} from '@angular/router';
 
 <div class="modal-card" *ngIf="checkOpen">
  <div class="modal-head"><div><h3>Check In Vehicle</h3><p>{{checkAppointment?.vehicle}} · {{serviceLabel(checkAppointment)}}</p></div><button type="button" class="icon-btn" (click)="closeCheckin()">×</button></div>
- <div class="check-summary"><span>Scheduled <b>{{checkAppointment?.startAt|date:'medium'}}</b></span><span>Bay <b>{{checkAppointment?.bay||'-'}}</b></span><span>Source <b>{{checkAppointment?.sourceType}}</b></span><span *ngIf="checkAppointment?.pmObligationId">PM <b>{{pmLabel(checkAppointment?.pmObligationId)}}</b></span></div>
+ <div class="check-summary"><span>Scheduled <b><app-fleet-date [value]="checkAppointment?.startAt"></app-fleet-date></b></span><span>Bay <b>{{checkAppointment?.bay||'-'}}</b></span><span>Source <b>{{checkAppointment?.sourceType}}</b></span><span *ngIf="checkAppointment?.pmObligationId">PM <b>{{pmLabel(checkAppointment?.pmObligationId)}}</b></span></div>
  <div class="open-req" *ngIf="openRequestsForVehicle(checkAppointment?.vehicleId).length"><b>Open service requests for this vehicle:</b> {{openRequestsForVehicle(checkAppointment?.vehicleId).length}}. They can be selected when Start Work is clicked.</div>
  <div class="fields">
    <label>Current Odometer (km)<input type="number" [(ngModel)]="check.odometerKm"></label>
@@ -58,7 +59,7 @@ import {Router} from '@angular/router';
 </div>
 
 <div class="card"><table><tr><th>No.</th><th>Vehicle</th><th>Source</th><th>Service</th><th>Start</th><th>Bay</th><th>Status</th><th>Action</th></tr>
-<tr *ngFor="let x of rows"><td>{{x.appointmentNumber}}</td><td><b>{{x.vehicle}}</b></td><td>{{x.sourceType}}<small>{{sourceDetail(x)}}</small></td><td>{{serviceLabel(x)}}</td><td>{{x.startAt|date:'medium'}}</td><td>{{x.bay}}</td><td>{{x.status}}</td><td class="act">
+<tr *ngFor="let x of rows"><td>{{x.appointmentNumber}}</td><td><b>{{x.vehicle}}</b></td><td>{{x.sourceType}}<small>{{sourceDetail(x)}}</small></td><td>{{serviceLabel(x)}}</td><td class="date-cell"><app-fleet-date [value]="x.startAt"></app-fleet-date></td><td>{{x.bay}}</td><td>{{x.status}}</td><td class="act">
 <button *ngIf="x.status==='Requested'" class="btn btn-outline" (click)="setStatus(x,'Confirmed')">Confirm</button>
 <button *ngIf="x.status==='Requested'||x.status==='Confirmed'" class="btn btn-primary" (click)="openCheckin(x)">Check In Vehicle</button>
 <button *ngIf="x.status==='Checked-In'" class="btn btn-primary" (click)="prepareStart(x)">Start Work</button>
