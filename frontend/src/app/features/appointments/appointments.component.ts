@@ -1,3 +1,4 @@
+import {SupervisorSelectComponent} from '../../shared/supervisor-select.component';
 import {FleetGridDirective} from '../../shared/fleet-grid.directive';
 import { FleetDateComponent } from '../../shared/fleet-date.component';
 import {Component,OnInit} from '@angular/core';
@@ -6,7 +7,7 @@ import {FormsModule} from '@angular/forms';
 import {HttpClient} from '@angular/common/http';
 import {Router} from '@angular/router';
 
-@Component({selector:'app-appointments',standalone:true,imports:[FleetGridDirective,FleetDateComponent,CommonModule,FormsModule],template:`
+@Component({selector:'app-appointments',standalone:true,imports:[SupervisorSelectComponent,FleetGridDirective,FleetDateComponent,CommonModule,FormsModule],template:`
 <section class="page">
 <div class="title"><div><h2>Appointments & Capacity</h2><p>Appointment = when and where the vehicle will visit. PM appointments originate from PM Obligations.</p></div><button type="button" class="btn btn-primary" (click)="openCreate()">+ Appointment</button></div>
 <div class="info"><b>Planned PM:</b> schedule from <b>PM Obligations</b>. Repair/inspection/campaign visits can be created here. Technician/team assignment happens after check-in.</div>
@@ -35,7 +36,7 @@ import {Router} from '@angular/router';
  <div class="check-summary"><span>Scheduled <b><app-fleet-date [value]="checkAppointment?.startAt"></app-fleet-date></b></span><span>Bay <b>{{checkAppointment?.bay||'-'}}</b></span><span>Source <b>{{checkAppointment?.sourceType}}</b></span><span *ngIf="checkAppointment?.pmObligationId">PM <b>{{pmLabel(checkAppointment?.pmObligationId)}}</b></span></div>
  <div class="open-req" *ngIf="openRequestsForVehicle(checkAppointment?.vehicleId).length"><b>Open service requests for this vehicle:</b> {{openRequestsForVehicle(checkAppointment?.vehicleId).length}}. Select any requests below to include in this Job Card.</div>
  <div class="fields">
-   <label>Assigned supervisor<input [(ngModel)]="assignedSupervisor" placeholder="Responsible supervisor"></label>
+   <label>Assigned supervisor<app-supervisor-select [(value)]="assignedSupervisor"></app-supervisor-select></label>
   <label>Current Odometer (km)<input type="number" [(ngModel)]="check.odometerKm"></label>
    <label>Operating Hours<input type="number" [(ngModel)]="check.operatingHours"></label>
    <label>Energy Used (kWh)<input type="number" [(ngModel)]="check.energyKwh"></label>
@@ -50,7 +51,7 @@ import {Router} from '@angular/router';
 <div class="modal-card" *ngIf="startOpen">
  <div class="modal-head"><div><h3>Create & Assign Service</h3><p>{{startAppointment?.vehicle}} · {{serviceLabel(startAppointment)}}</p></div><button class="icon-btn" (click)="closeStart()">×</button></div>
  <div class="source-box" *ngIf="startAppointment?.pmObligationId"><b>Scheduled PM</b><span>{{pmLabel(startAppointment?.pmObligationId)}}</span><small>The approved PM Task Matrix will generate automatically.</small></div>
- <label>Assigned supervisor<input [(ngModel)]="assignedSupervisor"></label><div class="source-box"><b>Additional Work</b><span>Select any service requests to include in the same Work Order.</span></div>
+ <label>Assigned supervisor<app-supervisor-select [(value)]="assignedSupervisor"></app-supervisor-select></label><div class="source-box"><b>Additional Work</b><span>Select any service requests to include in the same Work Order.</span></div>
  <div class="request-list" *ngIf="candidateRequests.length;else noRequests">
   <label class="request-row" *ngFor="let r of candidateRequests"><input type="checkbox" [(ngModel)]="r._selected"><span><b>{{r.requestNumber}}</b> · {{r.requestType}}<small>{{r.description}}</small></span></label>
  </div>
