@@ -35,4 +35,23 @@ describe('Veerai reasoning panel (UI fixtures are not live AI)',()=>{
   cy.get('button[aria-label="Close Veerai"]').should('be.visible').click();cy.get('button[aria-label="Open Veerai"]').should('be.visible');
  });
 
+ it('matches formatted registrations and explains why submission is blocked',()=>{
+  cy.intercept('GET','/api/veerai/status',{available:true});
+  cy.intercept('GET','/api/job-cards',{body:[{id,vehicle:'TG1067789',jobCardNumber:'JC-2026-123456',status:'Assigned'}]});
+  cy.intercept('POST',`/api/job-cards/${id}/veerai/analyse`,{statusCode:502,body:{message:'Correct job submitted'}}).as('formatted');
+  cy.visit('/');cy.get('[aria-label="Open Veerai"]').click();
+  cy.get('[aria-label="Find Veerai job"]').type('tg10 67789');
+  cy.get('[aria-label="Veerai job"]').select(id);
+  cy.contains('Enter your Veerai access key to continue.').should('be.visible');
+  cy.get('app-veerai input[type=password]').type('fixture');
+  cy.get('app-veerai .analyse').click();cy.wait('@formatted');
+  cy.get('[aria-label="Find Veerai job"]').clear().type('NOTFOUND');
+  cy.get('app-veerai .analyse').should('be.disabled');
+  cy.contains('No service jobs match').should('be.visible');
+  cy.contains('button','Show all service jobs').click();
+  cy.get('[aria-label="Veerai job"]').should('have.value','').select(id);
+  cy.get('[aria-label="Find Veerai job"]').clear().type('jc 2026 123456');
+  cy.get('[aria-label="Veerai job"]').select(id);
+ });
+
 });
