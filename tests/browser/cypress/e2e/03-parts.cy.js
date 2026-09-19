@@ -1,9 +1,10 @@
+import {vehicle,createVisit} from './flow-helpers';
 describe('Inventory receipt through vehicle consumption on real test APIs',()=>{
  it('tallies reserve, partial issue, consume, return, close and ledger',()=>{
   const number=`TEST-PART-${Date.now()}`;let part,location,job,request;
   cy.request('POST','/api/parts/master',{partNumber:number,description:'Automated test fixture (not OEM stock)',category:'TEST',unitOfMeasure:'EA',manufacturerPartNumber:'TEST-ONLY',catalogueReference:'Isolated Cypress fixture',standardCost:100,reorderLevel:1,reorderQuantity:2,isSerialized:false,isWarrantyReturnable:false}).then(r=>part=r.body);
   cy.request('/api/parts/locations').then(r=>location=r.body[0]);
-  cy.request('/api/job-cards').then(({body:rows})=>{job=rows.find(j=>!['Completed','Closed','Cancelled'].includes(j.status));expect(job,'open seeded job for inventory test').to.exist;});
+  vehicle('Breakdown').then(v=>createVisit('Breakdown',v)).then(({jobCard})=>{job=jobCard;});
   cy.visit('/parts');cy.contains('button','Receive Stock').click();
   cy.get('.editor').contains('label','Operator').find('input').clear().type('Cypress Stores');
   cy.then(()=>cy.get('.editor').contains('label','Part number').find('select').select(part.id));
