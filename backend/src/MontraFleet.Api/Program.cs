@@ -702,6 +702,7 @@ using (var scope = app.Services.CreateScope())
 
     await PmMasterSeedV177.SeedAsync(db);
     await DemoVehicleSeedV179.SeedAsync(db);
+    await db.ReconcileVisitStatusesAsync();
 
 
     async Task<ServiceCentreMaster> EnsureCentre(string code,string name,string address,string city,string state,string postal,string mobile,string email)
@@ -800,16 +801,6 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
     });
 }
 
-static async Task SyncServiceJobStatusAsync(AppDbContext db, Guid jobCardId)
-{
-    var job=await db.JobCards.FindAsync(jobCardId); if(job is null)return;
-    var service=await db.ServiceEvents.FindAsync(job.ServiceEventId); if(service is null)return;
-    if(service.Status=="Closed"||job.Status=="Completed") { service.Status="Closed"; job.Status="Completed"; return; }
-    if(service.Status=="On Hold"||job.Status=="On Hold") { service.Status="On Hold"; job.Status="On Hold"; return; }
-    if(service.Status=="In Progress"||job.Status=="In Progress") { service.Status="In Progress"; job.Status="In Progress"; return; }
-    if(service.Status=="Assigned"||job.Status=="Assigned") { service.Status="Assigned"; job.Status="Assigned"; return; }
-    service.Status="Open"; job.Status="Open";
-}
 
 app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.7" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
@@ -1774,7 +1765,6 @@ app.MapPut("/api/tasks/{id:guid}/status", async (Guid id, TaskStatusRequest r, A
         if(jc is not null){jc.Status="In Progress";var evt=await db.ServiceEvents.FindAsync(jc.ServiceEventId);if(evt is not null)evt.Status="In Progress";}
     }
     if(r.Status=="Completed")db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=t.JobCardId,WorkItemId=t.Id,EntryType="Task Completed",Comment=t.CompletionRemarks,CreatedBy=string.IsNullOrWhiteSpace(t.AssignedTo)?"Service User":t.AssignedTo,CreatedRole="Technician"});
-    await SyncServiceJobStatusAsync(db,t.JobCardId);
     Audit(db,"STATUS","Task",t.Id,$"{t.TaskCode}:{r.Status}");await db.SaveChangesAsync();return Results.Ok(t);
 });
 
@@ -1807,7 +1797,6 @@ app.MapPut("/api/job-cards/{id:guid}/assign", async (Guid id, JobCardAssignReque
     }
     var evt=await db.ServiceEvents.FindAsync(jc.ServiceEventId);if(evt is not null&&tech is not null&&evt.Status=="Awaiting Assignment")evt.Status="Assigned";
     if(tech is not null&&jc.Status=="Open")jc.Status="Assigned";
-    await SyncServiceJobStatusAsync(db,id);
     var by=string.IsNullOrWhiteSpace(r.AssignedBy)?"Service Supervisor":r.AssignedBy.Trim();
     db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=id,EntryType="Work Order Assigned",Comment=$"Technician: {jc.Technician}; Bay: {jc.Bay}",CreatedBy=by,CreatedRole="Supervisor"});
     Audit(db,"ASSIGN","JobCard",jc.Id,$"{jc.JobCardNumber}->{jc.Technician}; bay={jc.Bay}",by);await db.SaveChangesAsync();return Results.Ok(jc);
@@ -1872,6 +1861,14 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}/timeline", async (Guid jobCa
     var evt = await db.ServiceEvents.AsNoTracking().FirstOrDefaultAsync(x => x.Id == job.ServiceEventId);
     if (evt is null) return Results.NotFound();
     var items = new[] { new { at = (DateTime?)evt.OpenedAt, stage = "Service Event", status = "Opened", detail = evt.EventNumber } }.ToList();
+    if (evt.BreakdownId.HasValue)
+    {
+        var source = await db.Breakdowns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == evt.BreakdownId.Value);
+        if (source != null) items.Add(new { at = (DateTime?)source.ReportedAt, stage = "Breakdown", status = "Reported", detail = source.BreakdownNumber + ": " + source.Complaint });
+    }
+    var requests = await db.MaintenanceRequests.AsNoTracking().Where(x => x.JobCardId == jobCardId).ToListAsync();
+    foreach (var request in requests)
+        items.Add(new { at = (DateTime?)request.RequestedAt, stage = "Maintenance Request", status = "Reported", detail = request.RequestNumber + ": " + request.Description });
     if (job.StartedAt.HasValue)
         items.Add(new { at = job.StartedAt, stage = "Work Order", status = "Start recorded", detail = job.JobCardNumber });
     var logs = await db.WorkLogEntries.AsNoTracking().Where(x => x.JobCardId == jobCardId)
@@ -2206,40 +2203,7 @@ app.MapGet("/api/documents/{vin}", async (string vin, AppDbContext db) =>
     var v=await db.Vehicles.FirstOrDefaultAsync(x=>x.Vin==vin || x.RegistrationNumber==vin); if(v is null) return Results.NotFound();
     return Results.Ok(await db.VehicleDocuments.AsNoTracking().Where(x=>x.VehicleId==v.Id).OrderByDescending(x=>x.UploadedAt).ToListAsync());
 });
-app.MapGet("/api/search", async (string? q, AppDbContext db) =>
-{
-    var term=(q??"").Trim().ToLower();
-    if(string.IsNullOrWhiteSpace(term)) return Results.Ok(new { query=q??"", results=Array.Empty<object>() });
-
-    var vehicles=await db.Vehicles.AsNoTracking()
-        .Where(x=>x.Vin.ToLower().Contains(term)||x.RegistrationNumber.ToLower().Contains(term)||x.Model.ToLower().Contains(term))
-        .Take(15)
-        .Select(x=>new { type="Vehicle",key=x.RegistrationNumber,title=x.Model+" · "+x.Vin,status=x.Status,url="/vehicle?id="+x.Id }).ToListAsync();
-
-    var workOrders=await (from j in db.JobCards.AsNoTracking()
-                          join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
-                          join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
-                          where j.JobCardNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)
-                          orderby j.StartedAt descending
-                          select new {type="Work Order",key=j.JobCardNumber,title=v.RegistrationNumber+" · "+e.EventType,status=j.Status,linkedReference=e.EventNumber,linkedStatus=e.Status,detail="Engineer: "+(j.Technician==""?"Unassigned":j.Technician)+" · Bay: "+(j.Bay==""?"Not assigned":j.Bay),url="/service-workspace/"+j.Id}).Take(15).ToListAsync();
-
-    var events=await (from e in db.ServiceEvents.AsNoTracking()
-                      join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
-                      where e.EventNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)
-                      orderby e.OpenedAt descending
-                      join j0 in db.JobCards.AsNoTracking() on e.Id equals j0.ServiceEventId into jj from j in jj.DefaultIfEmpty()
-                      select new {type="Service Event",key=e.EventNumber,title=v.RegistrationNumber+" · "+e.EventType,status=e.Status,linkedReference=j!=null?j.JobCardNumber:"",linkedStatus=j!=null?j.Status:"",detail=j==null?"No Work Order":("Engineer: "+(j.Technician==""?"Unassigned":j.Technician)+" · Bay: "+(j.Bay==""?"Not assigned":j.Bay)),url=j!=null?"/service-workspace/"+j.Id:"/service"}).Take(10).ToListAsync();
-
-    var requests=await (from r in db.MaintenanceRequests.AsNoTracking()
-                        join v in db.Vehicles.AsNoTracking() on r.VehicleId equals v.Id
-                        where r.RequestNumber.ToLower().Contains(term)||v.RegistrationNumber.ToLower().Contains(term)||v.Vin.ToLower().Contains(term)||r.Description.ToLower().Contains(term)
-                        orderby r.RequestedAt descending
-                        select new {type="Maintenance Request",key=r.RequestNumber,title=v.RegistrationNumber+" · "+r.Description,status=r.Status,url="/maintenance-requests"}).Take(10).ToListAsync();
-
-    var results=new List<object>();
-    results.AddRange(vehicles);results.AddRange(workOrders);results.AddRange(events);results.AddRange(requests);
-    return Results.Ok(new { query=q??"", results });
-});
+app.MapGet("/api/search", async (string? q, AppDbContext db) => Results.Ok(await LinkedSearch.FindAsync(db, q)));
 
 
 app.MapGet("/api/vehicle360/{id:guid}", async (Guid id, AppDbContext db) =>
