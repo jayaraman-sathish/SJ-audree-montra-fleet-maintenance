@@ -185,3 +185,9 @@ await using(var reportDb=new AppDbContext(new DbContextOptionsBuilder<AppDbConte
  var captured=snapshot.Html;t.CompletionRemarks="Later changed text";reportDb.SaveChanges();await ServiceReports.CaptureAsync(reportDb,j.Id);
  Check((await reportDb.ServiceReportSnapshots.SingleAsync()).Html==captured,"Release snapshot is not silently regenerated after later record changes");
 }
+
+Check(VehicleImages.Resolve("vehicle.png","variant.png","model.png")=="vehicle.png","Vehicle photo overrides reference pictures");
+Check(VehicleImages.Resolve("", "variant.png","model.png")=="variant.png","Variant photo overrides model picture");
+Check(VehicleImages.Resolve(null,"  ","model.png")=="model.png","Blank variant does not suppress model photo");
+Check(VehicleImages.Resolve(null,null,null)=="","Missing photo remains explicit, not fabricated");
+Console.WriteLine("Vehicle picture fallback checks passed.");

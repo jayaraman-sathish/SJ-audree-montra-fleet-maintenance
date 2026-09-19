@@ -1464,7 +1464,17 @@ app.MapGet("/api/pm/plans/{id:guid}/tasks",async(Guid id,AppDbContext db)=>
     var rows=await(from m in db.MaintenancePlanTasks.AsNoTracking() join t in db.ServiceTaskMasters.AsNoTracking() on m.ServiceTaskMasterId equals t.Id where m.MaintenancePlanId==id orderby m.Sequence select new{m.Id,m.Sequence,m.IsMandatory,m.ServiceTaskMasterId,t.TaskCode,t.Name,t.StandardHours,t.RequiredSkillCode,t.RequiresHvAuthorization,t.RequiresQc,t.ChecklistCode}).ToListAsync();return Results.Ok(rows);
 });
 
-app.MapGet("/api/pm/enrollments",async(AppDbContext db)=>Results.Ok(await db.Vehicles.AsNoTracking().OrderBy(x=>x.RegistrationNumber).Select(v=>new{v.Id,v.RegistrationNumber,v.Vin,v.Model,v.Variant,v.ImageUrl,v.PurchaseDate,v.CommissioningDate,v.OdometerKm,v.OperatingHours,v.EnergyKwh,v.Status,v.MaintenanceProgramId,v.DepotCode,v.ServiceCentreCode,v.CustomerCode}).ToListAsync()));
+app.MapGet("/api/pm/enrollments",async(AppDbContext db)=>{
+ var models=await db.VehicleModelMasters.AsNoTracking().ToDictionaryAsync(x=>x.Id);
+ var variants=await db.VehicleVariantMasters.AsNoTracking().ToDictionaryAsync(x=>x.Id);
+ var vehicles=await db.Vehicles.AsNoTracking().OrderBy(x=>x.RegistrationNumber).ToListAsync();
+ return Results.Ok(vehicles.Select(v=>{
+  VehicleModelMaster? model=null;VehicleVariantMaster? variant=null;
+  if(v.ModelMasterId.HasValue)models.TryGetValue(v.ModelMasterId.Value,out model);
+  if(v.VariantMasterId.HasValue)variants.TryGetValue(v.VariantMasterId.Value,out variant);
+  return new{v.Id,v.RegistrationNumber,v.Vin,v.Model,v.Variant,v.ModelMasterId,v.VariantMasterId,imageUrl=VehicleImages.Resolve(v.ImageUrl,variant?.ImageUrl,model?.ImageUrl),v.PurchaseDate,v.CommissioningDate,v.OdometerKm,v.OperatingHours,v.EnergyKwh,v.Status,v.MaintenanceProgramId,v.DepotCode,v.ServiceCentreCode,v.CustomerCode};
+ }));
+});
 app.MapPost("/api/pm/enroll",async(VehicleEnrollmentRequest r,AppDbContext db)=>
 {
     if(await db.Vehicles.AnyAsync(x=>x.Vin==r.Vin||x.RegistrationNumber==r.RegistrationNumber))return Results.Conflict(new{message="VIN or registration number already exists."});
@@ -1477,7 +1487,7 @@ app.MapPost("/api/pm/enroll",async(VehicleEnrollmentRequest r,AppDbContext db)=>
             || (program.VehicleVariantMasterId.HasValue && program.VehicleVariantMasterId != variant?.Id))
             return Results.BadRequest(new { message = "Select an active PM program applicable to this vehicle model and variant." });
     }
-    var v=new Vehicle{Vin=r.Vin.Trim(),RegistrationNumber=r.RegistrationNumber.Trim().ToUpperInvariant(),Model=model.Name,Variant=variant?.Name??"",VehicleTypeCode=model.VehicleTypeCode,ManufacturerCode=model.ManufacturerCode,ModelMasterId=model.Id,VariantMasterId=variant?.Id,ImageUrl=string.IsNullOrWhiteSpace(r.ImageUrl)?(variant?.ImageUrl??model.ImageUrl):r.ImageUrl,MotorNumber=r.MotorNumber,PurchaseDate=r.PurchaseDate,PurchaseCost=r.PurchaseCost,InvoiceNumber=r.InvoiceNumber,DealerName=r.DealerName,CommissioningDate=r.CommissioningDate,RegistrationDate=r.RegistrationDate,RegistrationExpiry=r.RegistrationExpiry,InsuranceNumber=r.InsuranceNumber,InsuranceStartDate=r.InsuranceStartDate,InsuranceExpiryDate=r.InsuranceExpiryDate,WarrantyStartDate=r.WarrantyStartDate,WarrantyExpiryDate=r.WarrantyExpiryDate,BatteryWarrantyStartDate=r.BatteryWarrantyStartDate,BatteryWarrantyExpiryDate=r.BatteryWarrantyExpiryDate,OdometerKm=r.OdometerKm,OperatingHours=r.OperatingHours,EnergyKwh=r.EnergyKwh,BatterySoc=r.BatterySoc,DepotCode=r.DepotCode,ServiceCentreCode=r.ServiceCentreCode,CustomerCode=r.CustomerCode,OwnershipTypeCode=r.OwnershipTypeCode,MaintenanceProgramId=r.MaintenanceProgramId,Remarks=r.Remarks,Status="Available",IsActive=true};
+    var v=new Vehicle{Vin=r.Vin.Trim(),RegistrationNumber=r.RegistrationNumber.Trim().ToUpperInvariant(),Model=model.Name,Variant=variant?.Name??"",VehicleTypeCode=model.VehicleTypeCode,ManufacturerCode=model.ManufacturerCode,ModelMasterId=model.Id,VariantMasterId=variant?.Id,ImageUrl=VehicleImages.Resolve(r.ImageUrl,variant?.ImageUrl,model.ImageUrl),MotorNumber=r.MotorNumber,PurchaseDate=r.PurchaseDate,PurchaseCost=r.PurchaseCost,InvoiceNumber=r.InvoiceNumber,DealerName=r.DealerName,CommissioningDate=r.CommissioningDate,RegistrationDate=r.RegistrationDate,RegistrationExpiry=r.RegistrationExpiry,InsuranceNumber=r.InsuranceNumber,InsuranceStartDate=r.InsuranceStartDate,InsuranceExpiryDate=r.InsuranceExpiryDate,WarrantyStartDate=r.WarrantyStartDate,WarrantyExpiryDate=r.WarrantyExpiryDate,BatteryWarrantyStartDate=r.BatteryWarrantyStartDate,BatteryWarrantyExpiryDate=r.BatteryWarrantyExpiryDate,OdometerKm=r.OdometerKm,OperatingHours=r.OperatingHours,EnergyKwh=r.EnergyKwh,BatterySoc=r.BatterySoc,DepotCode=r.DepotCode,ServiceCentreCode=r.ServiceCentreCode,CustomerCode=r.CustomerCode,OwnershipTypeCode=r.OwnershipTypeCode,MaintenanceProgramId=r.MaintenanceProgramId,Remarks=r.Remarks,Status="Available",IsActive=true};
     db.Vehicles.Add(v);Audit(db,"ENROLL","Vehicle",v.Id,v.RegistrationNumber,r.CreatedBy);await db.SaveChangesAsync();await EnsurePmObligationsAsync(db,v);return Results.Created($"/api/vehicles/{v.Id}",v);
 });
 
