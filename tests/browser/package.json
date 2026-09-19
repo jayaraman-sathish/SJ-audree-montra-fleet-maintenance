@@ -1,0 +1,1 @@
+{"name":"montra-isolated-browser-checks","private":true,"scripts":{"test":"cypress run --browser electron"},"devDependencies":{"cypress":"14.5.4"}}
