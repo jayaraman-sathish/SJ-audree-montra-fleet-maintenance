@@ -704,6 +704,7 @@ using (var scope = app.Services.CreateScope())
 
     await PmMasterSeedV177.SeedAsync(db);
     await DemoVehicleSeedV179.SeedAsync(db);
+    await ResourceMasterSeedV1814.SeedAsync(db);
     await db.ReconcileVisitStatusesAsync();
 
 
@@ -913,6 +914,8 @@ app.MapPut("/api/vehicles/{id:guid}", async (Guid id, Vehicle input, AppDbContex
     var v=await db.Vehicles.FindAsync(id);if(v is null)return Results.NotFound();
     db.Entry(v).CurrentValues.SetValues(input);v.Id=id;await db.SaveChangesAsync();await EnsurePmObligationsAsync(db,v);return Results.Ok(v);
 });
+
+app.MapGet("/api/supervisors", async(AppDbContext db)=>Results.Ok(await db.MasterOptions.AsNoTracking().Where(x=>x.Category=="SUPERVISOR"&&x.IsActive).OrderBy(x=>x.SortOrder).ThenBy(x=>x.Name).Select(x=>new{x.Id,x.Code,x.Name}).ToListAsync()));
 
 app.MapGet("/api/pm/master-options", async (AppDbContext db) => Results.Ok(await db.MasterOptions.AsNoTracking().OrderBy(x=>x.Category).ThenBy(x=>x.SortOrder).ThenBy(x=>x.Name).ToListAsync()));
 app.MapPost("/api/pm/master-options", async (MasterOption r, AppDbContext db) =>
@@ -2004,7 +2007,16 @@ app.MapGet("/api/work-evidence/{id:guid}/content",async(Guid id,AppDbContext db)
     var x=await db.WorkEvidence.AsNoTracking().FirstOrDefaultAsync(e=>e.Id==id);return x is null?Results.NotFound():Results.File(x.Content,x.ContentType,x.FileName,enableRangeProcessing:true);
 });
 
-app.MapGet("/api/parts/master", async (AppDbContext db) => Results.Ok(await db.PartMasters.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.PartNumber).ToListAsync()));
+app.MapGet("/api/parts/master", async (Guid? jobCardId, AppDbContext db) =>
+{
+    var parts=await db.PartMasters.AsNoTracking().Where(x=>x.IsActive).OrderBy(x=>x.PartNumber).ToListAsync();
+    var links=await db.MasterOptions.AsNoTracking().Where(x=>x.Category=="PART_MODEL"&&x.IsActive).ToListAsync();
+    string? modelCode=null;
+    if(jobCardId.HasValue) {
+        modelCode=await(from j in db.JobCards where j.Id==jobCardId.Value join e in db.ServiceEvents on j.ServiceEventId equals e.Id join v in db.Vehicles on e.VehicleId equals v.Id join m in db.VehicleModelMasters on v.ModelMasterId equals (Guid?)m.Id select m.ModelCode).FirstOrDefaultAsync();
+    }
+    return Results.Ok(parts.Where(p=>!jobCardId.HasValue||!p.PartNumber.StartsWith("DEMO-")||links.Any(l=>l.Code==p.PartNumber&&l.Value==modelCode)).Select(p=>new{p.Id,p.PartNumber,p.Description,p.Category,p.UnitOfMeasure,p.ManufacturerPartNumber,p.IsSerialized,p.IsWarrantyReturnable,p.ReorderLevel,p.ReorderQuantity,p.StandardCost,p.IsActive,modelCodes=string.Join(", ",links.Where(l=>l.Code==p.PartNumber).Select(l=>l.Value)),matrixTasks=string.Join(", ",links.Where(l=>l.Code==p.PartNumber).Select(l=>l.Description))}));
+});
 app.MapPost("/api/parts/master", async (PartMasterRequest r, AppDbContext db) =>
 {
     if(string.IsNullOrWhiteSpace(r.PartNumber))return Results.BadRequest(new{message="Part number is required."});

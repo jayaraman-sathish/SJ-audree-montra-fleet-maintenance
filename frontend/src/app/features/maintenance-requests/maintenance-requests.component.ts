@@ -1,3 +1,4 @@
+import {SupervisorSelectComponent} from '../../shared/supervisor-select.component';
 import {Router} from '@angular/router';
 import {FleetGridDirective} from '../../shared/fleet-grid.directive';
 import { FleetDateComponent } from '../../shared/fleet-date.component';
@@ -6,7 +7,7 @@ import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {HttpClient} from '@angular/common/http';
 
-@Component({selector:'app-maintenance-requests',standalone:true,imports:[FleetGridDirective,FleetDateComponent,CommonModule,FormsModule],template:`
+@Component({selector:'app-maintenance-requests',standalone:true,imports:[SupervisorSelectComponent,FleetGridDirective,FleetDateComponent,CommonModule,FormsModule],template:`
 <section class="page">
 <div class="title"><div><h2>Maintenance Requests</h2><p>Unplanned or manually reported service needs. Planned preventive maintenance is generated under PM Obligations.</p></div><button class="btn btn-primary" (click)="open()">+ Maintenance Request</button></div>
 <div class="note"><b>Request = why service is needed.</b> Complaint category selects the diagnostic checklist. Appointment = when/where. Check-In = vehicle arrived. Work Order = workshop execution.</div>
@@ -21,12 +22,12 @@ import {HttpClient} from '@angular/common/http';
 <label>Complaint Category<select [(ngModel)]="f.complaintCategoryCode"><option *ngFor="let x of categories" [value]="x.code">{{x.name}}</option></select><small>{{selectedCategory()?.description}}</small></label>
 <label>Symptom<select [(ngModel)]="f.symptomCode"><option *ngFor="let x of symptoms" [value]="x.code">{{x.name}}</option></select></label>
 <label class="wide">Complaint / Description<textarea [(ngModel)]="f.description" placeholder="Example: oil leak observed below vehicle after parking"></textarea></label>
-<label>Service timing<select [(ngModel)]="immediate"><option [ngValue]="true">Vehicle here — create & assign now</option><option [ngValue]="false">Report only — schedule later</option></select></label><label *ngIf="immediate">Assigned supervisor<input [(ngModel)]="assignedSupervisor"></label><label>Target Date<input type="date" [(ngModel)]="target"></label>
+<label>Service timing<select [(ngModel)]="immediate"><option [ngValue]="true">Vehicle here — create & assign now</option><option [ngValue]="false">Report only — schedule later</option></select></label><label *ngIf="immediate">Assigned supervisor<app-supervisor-select [(value)]="assignedSupervisor"></app-supervisor-select></label><label>Target Date<input type="date" [(ngModel)]="target"></label>
 <label>Diagnostic Template<input [value]="selectedCategory()?.templateCode||'DIAG-GENERAL'" disabled></label>
 </div>
 <div class="actions"><button class="btn btn-outline" (click)="show=false">Cancel</button><button class="btn btn-primary" [disabled]="saving" (click)="save()">{{saving?'Saving…':immediate?'Create & Assign':'Save Request'}}</button></div><div class="error">{{message}}</div></div>
 
-<div class="modal-card" *ngIf="assignOpen"><h3>Create & Assign Service</h3><p>{{selected?.requestNumber}} · {{selected?.description}}</p><label>Assigned supervisor<input [(ngModel)]="assignedSupervisor"></label><div class="actions"><button class="btn" [disabled]="saving" (click)="assignOpen=false">Cancel</button><button class="btn btn-primary" [disabled]="saving||!assignedSupervisor.trim()" (click)="createExisting()">Create & Assign</button></div><p role="alert">{{message}}</p></div>
+<div class="modal-card" *ngIf="assignOpen"><h3>Create & Assign Service</h3><p>{{selected?.requestNumber}} · {{selected?.description}}</p><label>Assigned supervisor<app-supervisor-select [(value)]="assignedSupervisor"></app-supervisor-select></label><div class="actions"><button class="btn" [disabled]="saving" (click)="assignOpen=false">Cancel</button><button class="btn btn-primary" [disabled]="saving||!assignedSupervisor.trim()" (click)="createExisting()">Create & Assign</button></div><p role="alert">{{message}}</p></div>
 <div class="modal-card checkin" *ngIf="planOpen"><div class="modal-head"><div><h3>{{checkInNow?'Check In Vehicle':'Schedule Appointment'}}</h3><p>{{selected?.requestNumber}} · {{selected?.vehicle}} · {{selected?.description}}</p></div><button class="icon-btn" (click)="closePlan()">×</button></div>
 <div class="fields">
 <label *ngIf="!checkInNow">Date / Time<input type="datetime-local" [(ngModel)]="appointment.startAt" (change)="loadCapacity()"></label>
