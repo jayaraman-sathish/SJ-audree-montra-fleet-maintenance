@@ -1,0 +1,2 @@
+const { defineConfig } = require('cypress');
+module.exports=defineConfig({video:true,screenshotOnRunFailure:true,viewportWidth:1600,viewportHeight:1000,defaultCommandTimeout:15000,requestTimeout:20000,responseTimeout:30000,retries:0,e2e:{baseUrl:'http://127.0.0.1:5080',supportFile:false,setupNodeEvents(on,config){if(config.baseUrl!=='http://127.0.0.1:5080')throw new Error('Tests are restricted to the isolated loopback application.');return config;}}});
