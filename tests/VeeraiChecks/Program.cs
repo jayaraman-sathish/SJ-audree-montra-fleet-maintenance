@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using System.Text.Json;
 using System.Net;
 using Microsoft.EntityFrameworkCore;
@@ -52,6 +53,33 @@ Check(incomplete,"Incomplete provider responses rejected");
 handler.Fail=true;
 bool unavailable=false;try{await Veerai.Analyse(client,"fixture","fixture","x",sources,default);}catch(HttpRequestException){unavailable=true;}
 Check(unavailable,"Provider failure is not presented as a diagnosis");
+config["Veerai:AccessKey"]=null;
+Check(!VeeraiChat.Configured(config),"Chat retains access protection");
+config["Veerai:AccessKey"]=new string('x',32);
+var protector=new EphemeralDataProtectionProvider().CreateProtector("test");
+var session=protector.Protect($"{DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds()}|{VeeraiChat.KeyHash(config["Veerai:AccessKey"]!)}");
+Check(VeeraiChat.SessionValid(session,protector,config["Veerai:AccessKey"]!),"Encrypted browser session accepted");
+Check(!VeeraiChat.SessionValid("bad",protector,config["Veerai:AccessKey"]!),"Forged browser session rejected");
+Check(!VeeraiChat.SessionValid(session,protector,new string('y',32)),"Key rotation revokes old sessions");
+var expired=protector.Protect($"{DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeSeconds()}|{VeeraiChat.KeyHash(config["Veerai:AccessKey"]!)}");
+Check(!VeeraiChat.SessionValid(expired,protector,config["Veerai:AccessKey"]!),"Expired browser session rejected");
+Check(VeeraiChat.Mentions("Why ts09 dc2002?","TS09DC2002")&&!VeeraiChat.Mentions("TS09DC20020","TS09DC2002"),"Vehicle references match complete identifiers only");
+Check(VeeraiChat.Normalize("ts09-dc 2002")=="TS09DC2002","Chat normalizes references");
+var general=await VeeraiChat.Resolve(db,"Why is a Montra not charging?",null,default);
+Check(general.JobId==null&&general.Message==null,"General Montra questions do not require a job");
+var selected=await VeeraiChat.Resolve(db,"What should I check?",job.Id,default);
+Check(selected.JobId==job.Id,"Workspace context is used for follow-up questions");
+var multiple=await VeeraiChat.Resolve(db,"Why is PRIVATE-REG failing?",null,default);
+Check(multiple.Choices.Length==2&&multiple.JobId==null,"Multiple visits require conversational clarification");
+var unknown=await VeeraiChat.Resolve(db,"TG10 67789 is failing",job.Id,default);
+Check(unknown.JobId==null&&unknown.Message!.Contains("No match"),"Unknown explicit vehicle never uses previous job");
+var explicitJob=await VeeraiChat.Resolve(db,"Investigate JC-CURRENT",oldJob.Id,default);
+Check(explicitJob.JobId==job.Id,"Explicit job overrides old workspace context");
+Check(VeeraiChat.Parse("{\"relevant\":true,\"reply\":\"General guidance\",\"sources\":[]}",[]).Relevant,"General chat output accepted without invented sources");
+bool badChat=false;try{VeeraiChat.Parse("{\"relevant\":true,\"reply\":\"Claim\",\"sources\":[\"S999\"]}",sources);}catch(JsonException){badChat=true;}
+Check(badChat,"Chat rejects invented evidence references");
+using var schema=JsonDocument.Parse(JsonSerializer.Serialize(VeeraiChat.Format()));
+Check(schema.RootElement.GetProperty("strict").GetBoolean(),"Chat requests strict structured provider output");
 Console.WriteLine("Veerai checks passed. Provider is a protocol fixture; no live AI call made.");
 sealed class FixtureHandler(string text):HttpMessageHandler {
  public string? Body,Uri,Auth;public bool Completed=true,Fail;

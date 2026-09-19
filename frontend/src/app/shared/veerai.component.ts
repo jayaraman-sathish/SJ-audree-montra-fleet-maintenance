@@ -1,66 +1,49 @@
-import {Component,Input,OnChanges,OnDestroy,HostListener} from '@angular/core';
+import {Component,Input,OnChanges,OnDestroy,HostListener,ViewChild,ElementRef} from '@angular/core';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {HttpClient} from '@angular/common/http';
 import {Subscription} from 'rxjs';
 @Component({selector:'app-veerai',standalone:true,imports:[CommonModule,FormsModule],template:`
-<button *ngIf="!open" class="launch" (click)="openPanel()" aria-label="Open Veerai">✦ {{jobId?'Veerai · Analyse this job':'Ask Veerai'}}</button>
-<aside *ngIf="open" aria-label="Veerai job analysis" class="panel">
-<header><div><h2>Veerai</h2><small>Reason through this service job</small></div><button (click)="close()" aria-label="Close Veerai">×</button></header>
-<p>Choose a service job, then ask Veerai what to investigate.</p>
-<div class="job-picker" *ngIf="!jobId">
-<label>Find vehicle or Job Card<input [(ngModel)]="jobSearch" (ngModelChange)="searchChanged()" placeholder="Vehicle number / Job Card" aria-label="Find Veerai job"></label>
-<label *ngIf="filteredJobs().length">Choose a matching service job<select [(ngModel)]="selectedJobId" (ngModelChange)="changeJob()" aria-label="Veerai job"><option value="">Select a service job</option><option *ngFor="let j of filteredJobs()" [value]="j.id">{{j.vehicle}} · {{j.jobCardNumber}} · {{j.status}}</option></select></label>
-<p *ngIf="loadingJobs">Loading service jobs…</p><p *ngIf="jobError" role="alert">{{jobError}} <button (click)="loadJobs()">Retry</button></p><p *ngIf="!loadingJobs&&!jobError&&!filteredJobs().length">No service jobs match “{{jobSearch}}”. Try the last few registration digits. A vehicle must have a Job Card before Veerai can analyse it. <button (click)="clearSearch()">Show all service jobs</button></p>
-<p class="selected-job" *ngIf="selectedJob">Selected: <b>{{selectedJob.vehicle}}</b> · {{selectedJob.jobCardNumber}} · {{selectedJob.status}}</p>
+<button *ngIf="!open" class="launch" (click)="openPanel()" aria-label="Open Veerai">✦ Ask Veerai</button>
+<section *ngIf="open" class="chat" role="dialog" aria-label="Veerai chat" [style.left.px]="left" [style.top.px]="top" [class.moved]="left!==null">
+<header (pointerdown)="startDrag($event)"><div><b>✦ Veerai</b><small>Montra service assistant</small></div><div class="controls"><button (click)="reset()" aria-label="New chat" title="New chat">↺</button><button (click)="open=false" aria-label="Minimise Veerai">−</button><button (click)="close()" aria-label="Close Veerai">×</button></div></header>
+<div class="context" *ngIf="contextLabel||jobId">{{contextLabel||'Using this service workspace'}} <button *ngIf="contextId&&!jobId" (click)="reset()">Clear</button></div>
+<div class="messages" #messages role="log" aria-live="polite">
+<div class="welcome" *ngIf="!turns.length"><h3>How can I help?</h3><p>Ask about a Montra fault, repair or service job. Include a vehicle number when needed.</p><button (click)="draft='What should I check if my Montra is not charging?'">Montra not charging?</button><button *ngIf="jobId" (click)="draft='What could explain this complaint, and what should we check next?'">Investigate this complaint</button></div>
+<article *ngFor="let t of turns" [class.mine]="t.role==='user'"><small>{{t.role==='user'?'You':'Veerai'}}</small><p>{{t.text}}</p><details *ngIf="t.sources?.length"><summary>Evidence used</summary><div *ngFor="let s of t.sources"><a [href]="s.url" target="_blank" rel="noopener">{{s.id}} · {{s.label}}</a><pre>{{s.detail}}</pre></div></details></article>
+<div class="choices" *ngIf="choices.length"><button *ngFor="let c of choices" (click)="choose(c)" [disabled]="busy">{{c.label}}</button></div>
+<p *ngIf="busy" class="thinking" role="status">Veerai is thinking…</p>
+<p *ngIf="error" class="error" role="alert">{{error}} <button (click)="retry()" *ngIf="lastQuestion&&!busy">Retry</button></p>
 </div>
-<p *ngIf="jobId">Using the current Service Workspace.</p>
-<p *ngIf="available===false" role="status">Veerai is not connected. Your administrator must configure AI access.</p>
-<div *ngIf="available===true">
-<p class="notice">Selected job notes and vehicle history are sent to AI. No photos or manuals. Check the evidence before acting.</p>
-<label>Veerai access key<input type="password" autocomplete="off" [(ngModel)]="access" placeholder="Enter your Veerai access key"><small>Use the Veerai key supplied by your administrator, not the OpenAI API key.</small></label>
-<label>What should Veerai investigate?<textarea [(ngModel)]="question" maxlength="1500" rows="3"></textarea></label>
-<div class="suggestions"><button *ngFor="let q of prompts" (click)="question=q" [disabled]="busy">{{q}}</button></div>
-<div class="submit-area"><p *ngIf="blockedReason" role="status" id="veerai-submit-help">{{blockedReason}}</p>
-<button aria-describedby="veerai-submit-help" class="analyse" (click)="analyse()" [disabled]="busy||!activeJobId||!access.trim()||!question.trim()">{{busy?'Analysing evidence…':'Analyse this job'}}</button>
-<button *ngIf="busy" (click)="cancel()">Cancel</button></div>
-</div>
-<p role="alert" *ngIf="error">{{error}}</p>
-<div *ngIf="result"><p class="notice">{{result.notice}}</p><small>Analysed {{result.analysedAt|date:'medium'}} · {{result.model}}</small>
-<section *ngFor="let s of sections"><h3>{{s.label}}</h3><p *ngIf="!result.analysis[s.key]?.length">No assessment returned for this section.</p>
-<article *ngFor="let p of result.analysis[s.key]"><p>{{p.text}}</p><a *ngFor="let id of p.sources" [href]="'#veer-source-'+id" (click)="showSources=true">[{{id}}] </a></article></section>
-<button (click)="showSources=!showSources">{{showSources?'Hide':'View'}} evidence sources</button>
-<div *ngIf="showSources"><article *ngFor="let s of result.sources" [id]="'veer-source-'+s.id"><b>{{s.id}} · {{s.label}}</b><pre>{{s.detail}}</pre><a [href]="s.url" target="_blank" rel="noopener">Open source job</a></article></div>
-</div>
-</aside>`,styles:[`
-.launch{position:fixed;bottom:22px;right:24px;z-index:100;box-shadow:0 4px 16px #17375d33;border:1px solid #b4c7ee;background:#eef4ff;color:#163c75;border-radius:8px;padding:10px 14px;margin-bottom:12px;cursor:pointer}
-.panel{position:fixed;right:0;top:0;bottom:0;width:min(590px,100vw);box-sizing:border-box;overflow-y:auto;background:white;box-shadow:-5px 0 24px #172d4d33;z-index:1200;padding:22px;color:#172d4d}
-header{position:sticky;top:-22px;background:white;padding:12px 0;z-index:1;display:flex;align-items:center;justify-content:space-between}h2{margin:0}h3{font-size:16px;margin-bottom:8px}label{display:block;margin:12px 0;font-size:13px}input,textarea,select{box-sizing:border-box;width:100%;padding:10px;border:1px solid #bbc9db;border-radius:6px;margin-top:5px}button{padding:8px 12px;border:1px solid #cbd5e1;background:#fff;border-radius:6px;cursor:pointer}button:disabled{opacity:.55;cursor:not-allowed}.analyse{background:#145bc1;color:white;margin-top:12px}.selected-job{padding:10px;background:#edf8f1;border:1px solid #badbc5;border-radius:6px}.submit-area{position:sticky;bottom:-22px;background:white;padding:10px 0;border-top:1px solid #e0e7f0;margin-top:12px;z-index:1}.submit-area p{font-size:13px;margin:0;color:#75420b}.submit-area .analyse{width:100%;min-height:44px}.suggestions{display:flex;gap:6px;flex-wrap:wrap}.suggestions button{font-size:12px}.notice{background:#f0f5fb;padding:10px;font-size:13px}article{border-bottom:1px solid #e0e7f0;padding:8px 0}article p{margin:4px 0;white-space:pre-wrap}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 monospace}a{color:#155bbb}section{margin-top:18px}
+<form *ngIf="needsUnlock" (ngSubmit)="unlock()" class="unlock"><label>Unlock this browser for 8 hours<input type="password" name="access" [(ngModel)]="access" placeholder="Administrator-provided Veerai key" autocomplete="off"></label><button type="submit" [disabled]="busy||!access.trim()">Unlock</button></form>
+<form (ngSubmit)="send()"><label class="sr-only" for="veer-message">Message Veerai</label><textarea id="veer-message" name="message" [(ngModel)]="draft" placeholder="Ask Veerai…" rows="2" maxlength="1500" (keydown.enter)="enter($event)"></textarea><button class="send" type="submit" [disabled]="busy||!draft.trim()" aria-label="Send message">Send ↑</button><button *ngIf="busy" type="button" (click)="cancel()">Stop</button></form>
+<footer>AI guidance · Verify before acting. Job notes and chat are sent to AI.</footer>
+</section>`,styles:[`
+:host{font-family:Arial,sans-serif;color:#17304e}.launch{position:fixed;right:22px;bottom:22px;z-index:1100;background:#125ece;color:white;border:0;border-radius:28px;padding:14px 20px;box-shadow:0 6px 24px #16345a40;cursor:pointer}
+.chat{position:fixed;right:22px;bottom:82px;width:420px;height:560px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 100px);z-index:1200;background:white;border:1px solid #d4deeb;border-radius:18px;box-shadow:0 12px 48px #16345a40;display:flex;flex-direction:column;overflow:hidden}.chat.moved{right:auto;bottom:auto}
+header{min-height:64px;box-sizing:border-box;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;background:#123b73;color:white;cursor:move;touch-action:none}header b{font-size:19px}header small{display:block;font-size:11px;margin-top:3px;color:#d5e5ff}.controls{display:flex;gap:4px}.controls button{background:transparent;border:0;color:white;font-size:20px;padding:6px;min-width:30px}.context{font-size:12px;background:#eef4fc;padding:8px 12px;display:flex;justify-content:space-between}.messages{flex:1;overflow:auto;padding:16px;min-height:0;scroll-behavior:smooth}.welcome h3{margin:8px 0}.welcome p{font-size:14px;line-height:1.5;color:#576c85}.welcome button,.choices button{display:block;text-align:left;margin:8px 0;border:1px solid #d2dfef;border-radius:10px;background:white;padding:10px;font-size:13px;width:100%}article{background:#f0f4f9;border-radius:12px;padding:10px 12px;margin-bottom:12px;max-width:92%;font-size:14px;line-height:1.5}article.mine{background:#e5efff;margin-left:auto}article small{font-size:11px;font-weight:bold;color:#516d8b}article p{white-space:pre-wrap;overflow-wrap:anywhere;margin:4px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px}summary,a{color:#135eb9;font-size:12px;cursor:pointer}form{display:flex;align-items:end;gap:8px;border-top:1px solid #e2e8f1;padding:12px;background:white}textarea{flex:1;min-width:0;resize:none;border:1px solid #cad7e7;border-radius:10px;padding:10px;font:14px/1.4 Arial;box-sizing:border-box}.send{background:#125ece;color:white;border:0;border-radius:9px;padding:12px}button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}footer{font-size:10px;color:#64758b;padding:0 12px 10px}.error{color:#963c19;background:#fff3ec;padding:10px;font-size:13px}.thinking{font-size:13px;color:#516d8b}.unlock{background:#fff8e9;font-size:12px}.unlock input{display:block;width:100%;box-sizing:border-box;padding:8px;margin-top:6px;border:1px solid #d2dfef;border-radius:6px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}@media(max-width:500px){.chat,.chat.moved{left:12px!important;top:auto!important;right:12px!important;bottom:74px!important;width:auto;max-width:none;height:540px}.launch{right:12px;bottom:16px}}
 `]})
-export class VeeraiComponent implements OnChanges,OnDestroy {
- @Input() jobId='';open=false;available:boolean|null=null;access='';busy=false;error='';result:any=null;showSources=false;
- question='What could explain this complaint, and which checks should the technician do next?';
- prompts=['Investigate possible causes','Check for repeat failures','Review repair and QC evidence'];
- sections=[{key:'findings',label:'Recorded findings'},{key:'possibleCauses',label:'Possible causes — not confirmed'},{key:'missingEvidence',label:'Missing evidence / questions'},{key:'recommendedChecks',label:'Recommended checks'},{key:'qcReview',label:'Repair and QC review'}];
- selectedJobId='';jobSearch='';jobs:any[]=[];loadingJobs=false;jobError='';
- private request?:Subscription;private jobsRequest?:Subscription;private statusRequest?:Subscription;
- get activeJobId(){return this.jobId||this.selectedJobId;}
- @HostListener('document:keydown.escape') escape(){if(this.open)this.close();}
- normalize(value:string){return (value||'').toLowerCase().replace(/[^a-z0-9]/g,'');}
- filteredJobs(){const q=this.normalize(this.jobSearch);return this.jobs.filter(j=>this.normalize(j.vehicle).includes(q)||this.normalize(j.jobCardNumber).includes(q));}
- get selectedJob(){return this.jobs.find(j=>j.id===this.selectedJobId);}
- get blockedReason(){if(this.busy)return '';if(!this.activeJobId)return 'Choose a service job to continue.';if(!this.access.trim())return 'Enter your Veerai access key to continue.';if(!this.question.trim())return 'Enter a question or choose one below.';return '';}
- searchChanged(){this.selectedJobId='';this.changeJob();}
- clearSearch(){this.jobSearch='';this.searchChanged();}
- changeJob(){this.cancel();this.result=null;this.error='';this.showSources=false;}
- loadJobs(){this.jobsRequest?.unsubscribe();this.loadingJobs=true;this.jobError='';this.jobsRequest=this.http.get<any[]>('/api/job-cards').subscribe({next:r=>{this.jobs=r;this.loadingJobs=false;},error:()=>{this.loadingJobs=false;this.jobError='Unable to load service jobs.';}});}
+export class VeeraiComponent implements OnChanges,OnDestroy{
+ @Input() jobId='';@ViewChild('messages') messages?:ElementRef<HTMLDivElement>;
+ needsUnlock=false;access='';open=false;draft='';busy=false;error='';contextId:string|null=null;contextLabel='';turns:any[]=[];choices:any[]=[];lastQuestion='';left:number|null=null;top:number|null=null;
+ private request?:Subscription;private drag:any;
  constructor(private http:HttpClient){}
- ngOnChanges(){this.cancel();this.result=null;this.open=false;this.access='';this.selectedJobId='';}
- ngOnDestroy(){this.request?.unsubscribe();this.jobsRequest?.unsubscribe();this.statusRequest?.unsubscribe();}
- openPanel(){this.open=true;this.error='';if(!this.jobId)this.loadJobs();this.statusRequest?.unsubscribe();this.statusRequest=this.http.get<any>('/api/veerai/status').subscribe({next:r=>this.available=r.available,error:()=>{this.available=false;this.error='Unable to check Veerai connection.';}});}
- close(){this.cancel();this.open=false;this.access='';}
+ ngOnChanges(){this.reset();}ngOnDestroy(){this.request?.unsubscribe();}
+ openPanel(){this.open=true;this.scroll();}close(){this.cancel();this.open=false;this.access='';}
+ reset(){this.cancel();this.turns=[];this.choices=[];this.error='';this.access='';this.contextId=this.jobId||null;this.contextLabel='';this.lastQuestion='';this.draft='';}
  cancel(){this.request?.unsubscribe();this.busy=false;}
- analyse(){if(this.busy||!this.activeJobId||!this.access.trim()||!this.question.trim())return;this.busy=true;this.error='';this.result=null;this.showSources=false;
- this.request=this.http.post<any>('/api/job-cards/'+this.activeJobId+'/veerai/analyse',{question:this.question},{headers:{'X-Veerai-Access':this.access}}).subscribe({next:r=>{this.result=r;this.busy=false;},error:e=>{this.error=e.status===429?'Veerai is busy. Please wait a minute and retry.':e.error?.message||'Analysis could not be completed. Please retry.';this.busy=false;}});
+ @HostListener('document:keydown.escape') escape(){this.open=false;}
+ enter(e:Event){const k=e as KeyboardEvent;if(!k.shiftKey&&!k.isComposing){k.preventDefault();this.send();}}
+ send(){const text=this.draft.trim();if(!text||this.busy)return;this.draft='';this.submit(text,true);}
+ retry(){if(this.lastQuestion&&!this.busy)this.submit(this.lastQuestion,false);}
+ choose(c:any){this.contextId=c.id;this.contextLabel=c.label;this.choices=[];this.submit(this.lastQuestion,false,c.id);}
+ submit(text:string,add:boolean,choice?:string){const history=this.turns.slice(-10).map(t=>({role:t.role,text:t.text}));if(add)this.turns.push({role:'user',text});this.lastQuestion=text;this.busy=true;this.error='';this.choices=[];this.scroll();
+ this.request=this.http.post<any>('/api/veerai/chat',{message:text,jobId:this.contextId||this.jobId||null,selectedJobId:choice||null,history}).subscribe({next:r=>{this.busy=false;this.contextId=r.jobId||null;this.contextLabel=r.context||'';this.turns.push({role:'assistant',text:r.reply,sources:r.sources});this.choices=r.choices||[];this.scroll();},error:e=>{this.busy=false;this.needsUnlock=e.status===401;this.error=e.status===429?'Veerai is busy. Please wait a minute and retry.':e.error?.message||'Unable to reach Veerai. Please retry.';this.scroll();}});
  }
+ unlock(){if(this.busy||!this.access.trim())return;this.busy=true;this.error='';this.request=this.http.post('/api/veerai/chat/session',{accessKey:this.access}).subscribe({next:()=>{this.access='';this.needsUnlock=false;this.busy=false;this.retry();},error:e=>{this.access='';this.busy=false;this.error=e.error?.message||'Unable to unlock Veerai.';}});}
+ scroll(){setTimeout(()=>{const el=this.messages?.nativeElement;if(el)el.scrollTop=el.scrollHeight;},0);}
+ startDrag(e:PointerEvent){if((e.target as HTMLElement).closest('button'))return;const box=(e.currentTarget as HTMLElement).parentElement!.getBoundingClientRect();this.drag={x:e.clientX,y:e.clientY,left:box.left,top:box.top,width:box.width,height:box.height};e.preventDefault();}
+ @HostListener('document:pointermove',['$event']) move(e:PointerEvent){if(!this.drag)return;this.left=Math.max(0,Math.min(window.innerWidth-this.drag.width,this.drag.left+e.clientX-this.drag.x));this.top=Math.max(0,Math.min(window.innerHeight-this.drag.height,this.drag.top+e.clientY-this.drag.y));}
+ @HostListener('document:pointerup') endDrag(){this.drag=null;}
+ @HostListener('window:resize') resize(){this.left=null;this.top=null;this.drag=null;}
 }
