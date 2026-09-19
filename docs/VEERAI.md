@@ -1,6 +1,6 @@
 # Veerai — service-job reasoning pilot
 
-Open a Service Workspace and choose **Veerai · Analyse this job**. Ask about causes, repeat failures or repair/QC evidence. Results separate findings, hypotheses, missing evidence, recommended checks and QC concerns, with source excerpts and links. Reanalyse after changes; this is a snapshot, not a live diagnosis.
+Choose the floating **Ask Veerai** button at the bottom right of any page and select a vehicle/Job Card. In a Service Workspace, the button reads **Veerai · Analyse this job** and uses the current job automatically. Ask about causes, repeat failures or repair/QC evidence. Results separate findings, hypotheses, missing evidence, recommended checks and QC concerns, with source excerpts and links. Reanalyse after changes; this is a snapshot, not a live diagnosis.
 
 ## Configure on the backend (Render environment)
 

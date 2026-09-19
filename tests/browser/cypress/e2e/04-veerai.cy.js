@@ -22,4 +22,17 @@ describe('Veerai reasoning panel (UI fixtures are not live AI)',()=>{
   cy.visit(`/service-workspace/${id}`);cy.contains('button','Veerai · Analyse this job').click();cy.get('app-veerai input[type=password]').type('fixture');cy.get('app-veerai .analyse').click();
   cy.contains('Provider unavailable; no records changed.').should('be.visible');cy.get('app-veerai .analyse').should('be.enabled');
  });
+ it('opens from dashboard and parts and sends the selected job only',()=>{
+  cy.intercept('GET','/api/veerai/status',{available:true});
+  cy.intercept('POST',`/api/job-cards/${id}/veerai/analyse`,{statusCode:502,body:{message:'Selected job fixture received'}}).as('selected');
+  cy.visit('/');cy.get('button[aria-label="Open Veerai"]').should('be.visible').click();
+  cy.get('app-veerai input[type=password]').type('fixture');cy.get('app-veerai .analyse').should('be.disabled');
+  cy.get('select[aria-label="Veerai job"]').select(id);cy.get('app-veerai .analyse').click();cy.wait('@selected');cy.contains('Selected job fixture received').should('be.visible');
+  cy.get('button[aria-label="Close Veerai"]').click();cy.visit('/parts');cy.contains('button','Ask Veerai').should('be.visible').click();cy.get('select[aria-label="Veerai job"]').should('be.visible');
+ });
+ it('shows one launcher on narrow screens',()=>{
+  cy.viewport(390,844);cy.visit('/');cy.get('button[aria-label="Open Veerai"]').should('have.length',1).and('be.visible').click();
+  cy.get('button[aria-label="Close Veerai"]').should('be.visible').click();cy.get('button[aria-label="Open Veerai"]').should('be.visible');
+ });
+
 });

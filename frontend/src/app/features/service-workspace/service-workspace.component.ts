@@ -1,4 +1,3 @@
-import {VeeraiComponent} from '../../shared/veerai.component';
 import {SupervisorSelectComponent} from '../../shared/supervisor-select.component';
 import {FleetChoiceComponent} from '../../shared/fleet-choice.component';
 import {FleetGridDirective} from '../../shared/fleet-grid.directive';
@@ -9,9 +8,8 @@ import {FormsModule} from '@angular/forms';
 import {ActivatedRoute,Router} from '@angular/router';
 import {HttpClient} from '@angular/common/http';
 
-@Component({selector:'app-service-workspace',standalone:true,imports:[VeeraiComponent,SupervisorSelectComponent,FleetChoiceComponent,FleetGridDirective,FleetDateComponent,CommonModule,FormsModule],template:`
+@Component({selector:'app-service-workspace',standalone:true,imports:[SupervisorSelectComponent,FleetChoiceComponent,FleetGridDirective,FleetDateComponent,CommonModule,FormsModule],template:`
 <section class="page" *ngIf="w">
-<app-veerai [jobId]="jobId"></app-veerai>
 <style>.breakdown-source{border-left:4px solid #f97316}.job-setup{display:grid;grid-template-columns:minmax(220px,1.4fr) 1fr 1fr auto auto;gap:10px;align-items:end;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:12px;margin:0 0 14px}.job-setup>div small{display:block;color:#475569;margin-top:4px}.job-setup label{display:grid;gap:4px;font-size:11px;color:#475569}.job-setup input,.job-setup select{min-height:44px;padding:8px;border:1px solid #cbd5e1;border-radius:7px;background:#fff}.job-setup .assign-all{display:flex;align-items:center;gap:6px;min-height:44px}.job-setup .assign-msg{grid-column:1/-1}@media(max-width:1000px){.job-setup{grid-template-columns:1fr 1fr}}@media(max-width:700px){.job-setup{grid-template-columns:1fr}.job-setup .assign-msg{grid-column:auto}}</style>
 <div style="margin-bottom:12px"><a [href]="'/api/job-cards/'+jobId+'/report'" target="_blank" rel="noopener">{{w.data.eventStatus==='Closed'?'Service Completion Report':'Preview Work Report'}}</a></div><div class="head"><div><h2>{{w.data.jobCardNumber}} · {{w.data.vehicle}}</h2><small>Service Event: {{w.data.eventNumber}} · {{w.data.eventStatus||w.data.status}}</small><p>{{w.data.model}} · {{w.data.eventType}} · {{w.data.bay}} · {{w.data.odometerKm|number:'1.0-0'}} km</p></div><span class="status">Work Order: {{w.data.status}}<small>Service Event: {{w.data.eventStatus||w.data.status}}</small></span></div>
 
