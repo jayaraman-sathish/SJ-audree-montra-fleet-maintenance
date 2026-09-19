@@ -14,9 +14,8 @@ public static class LifecycleRules
         else if (taskTransition && tasks.Contains("Completed")) status = "In Progress";
         else if (service == "On Hold" || job == "On Hold") status = "On Hold";
         else if (service == "In Progress" || job == "In Progress" || job == "Completed") status = "In Progress";
-        else if (assigned || service == "Assigned" || job == "Assigned") status = "Assigned";
-        else if (service == "Awaiting Assignment" || job == "Awaiting Assignment") status = "Awaiting Assignment";
-        else status = "Open";
+        else if (assigned) status = "Assigned";
+        else status = "Awaiting Assignment";
         return (status, status);
     }
 }

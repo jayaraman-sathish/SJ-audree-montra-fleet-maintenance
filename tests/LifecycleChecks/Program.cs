@@ -45,3 +45,21 @@ Check(service.Status == "Closed" && job.Status == "Completed", "Task change cann
 Check(LifecycleRules.Resolve("Open", "Open", new[] { "Assigned" }, true, true) == ("Assigned", "Assigned"), "Assignment synchronization");
 Check(await db.WorkLogEntries.AnyAsync(x => x.EntryType == "Task Update"), "Task transitions logged in timeline");
 Console.WriteLine("Lifecycle and grouped-search checks passed (in-memory provider; not PostgreSQL integration tests).");
+
+foreach(var kind in new[] { "PM", "Breakdown", "Maintenance" })
+{
+    var visit = new ServiceEvent { VehicleId = vehicle.Id, EventNumber = "SE-" + kind, EventType = kind, Status = "In Progress" };
+    var card = new JobCard { ServiceEventId = visit.Id, JobCardNumber = "JC-" + kind };
+    var work = new WorkItem { JobCardId = card.Id, TaskCode = "T-" + kind, Status = "Assigned",
+        AssignedToTechnicianId = Guid.NewGuid(), AssignedTo = "Technician" };
+    db.AddRange(visit, card, work); await db.SaveChangesAsync();
+    Check(visit.Status == "Awaiting Assignment" && card.Status == visit.Status, kind + ": technician is not main assignee");
+    visit.AssignedSupervisor = "Supervisor A"; visit.SupervisorAssignedAt = DateTime.UtcNow;
+    await db.SaveChangesAsync();
+    Check(visit.Status == "Assigned" && card.Status == "Assigned", kind + ": supervisor assigns main request");
+    db.WorkLogEntries.Add(new WorkLogEntry { JobCardId = card.Id, CreatedBy = "Other person", Comment = "A note" });
+    work.AssignedTo = "Another technician"; await db.SaveChangesAsync();
+    Check(visit.AssignedSupervisor == "Supervisor A" && visit.Status == "Assigned", kind + ": note and allocation preserve assignment");
+    work.Status = "In Progress"; await db.SaveChangesAsync();
+    Check(visit.Status == "In Progress" && card.Status == "In Progress", kind + ": work starts linked lifecycle");
+}
