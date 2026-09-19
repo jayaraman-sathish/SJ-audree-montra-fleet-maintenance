@@ -2168,6 +2168,47 @@ app.MapGet("/api/breakdowns", async (AppDbContext db) =>
                         jobCardId=j!=null?j.Id:(Guid?)null,jobCardNumber=j!=null?j.JobCardNumber:"",bay=j!=null?j.Bay:"",technician=j!=null?j.Technician:"",technicianId=j!=null?j.TechnicianId:null }).ToListAsync();
     return Results.Ok(rows);
 });
+async Task<(ServiceEvent Event, JobCard Job)> CreateBreakdownServiceAsync(AppDbContext db, Breakdown b, Technician? tech, string? bay, bool generateDiagnosis, string actor, string? supervisor)
+{
+    var e=new ServiceEvent { VehicleId=b.VehicleId, BreakdownId=b.Id, EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}", EventType="Breakdown", Priority=b.Priority, Status="Awaiting Assignment", AssignedSupervisor=supervisor?.Trim()??"",SupervisorAssignedAt=string.IsNullOrWhiteSpace(supervisor)?null:DateTime.UtcNow };
+    var j=new JobCard { ServiceEventId=e.Id, JobCardNumber=$"JC-{DateTime.UtcNow:yyyy}-{(await db.JobCards.CountAsync()+1):D6}", Status="Open",Bay=bay?.Trim()??"",TechnicianId=tech?.Id,Technician=tech?.Name??"",StartedAt=null };
+    b.Status="Converted";b.ResponseAt??=DateTime.UtcNow;db.ServiceEvents.Add(e);db.JobCards.Add(j);
+    if(generateDiagnosis)
+    {
+        var mr=new MaintenanceRequest{RequestNumber=b.BreakdownNumber,VehicleId=b.VehicleId,Description=$"General diagnosis for breakdown: {b.Complaint}",ComplaintCategoryCode="GENERAL",SymptomCode="OTHER",DiagnosticTemplateCode="DIAG-GENERAL",Priority=b.Priority};
+        await AddDiagnosticWorkAsync(db,j,mr,b.Priority);
+        var created=db.ChangeTracker.Entries<WorkItem>().Select(x=>x.Entity).Where(x=>x.JobCardId==j.Id).ToList();
+        foreach(var task in created)if(tech is not null){task.AssignedToTechnicianId=tech.Id;task.AssignedTo=tech.Name;task.Status="Assigned";}
+        db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=j.Id,WorkItemId=created.FirstOrDefault()?.Id,EntryType="General Diagnosis Added",Comment=$"Created from {b.BreakdownNumber}: {b.Complaint}",CreatedBy=actor??"Service Supervisor",CreatedRole="Supervisor"});
+    }
+    var by=actor;
+    if(!string.IsNullOrWhiteSpace(supervisor)) db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=j.Id,EntryType="Supervisor Assigned",Comment=$"Assigned to {supervisor.Trim()}",CreatedBy=by,CreatedRole="Supervisor"});
+    db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=j.Id,EntryType="Breakdown Converted",Comment=$"{b.BreakdownNumber} → {e.EventNumber} → {j.JobCardNumber}",CreatedBy=by,CreatedRole="Supervisor"});
+    Audit(db,"CONVERT","Breakdown",b.Id,$"{b.BreakdownNumber}->{e.EventNumber}->{j.JobCardNumber}",by);await db.SaveChangesAsync();return (e,j);
+}
+
+app.MapPost("/api/breakdowns/report-and-assign", async (BreakdownAssignedRequest r, AppDbContext db) =>
+{
+    if(r.RequestId==Guid.Empty||string.IsNullOrWhiteSpace(r.AssignedSupervisor)||string.IsNullOrWhiteSpace(r.Complaint)||string.IsNullOrWhiteSpace(r.Location))
+        return Results.BadRequest(new { message="Enter the reported issue, location and assigned supervisor." });
+    await using var transaction=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+    var v=await db.Vehicles.FindAsync(r.VehicleId);if(v is null)return Results.BadRequest(new{message="Vehicle not found."});
+    var existing=await db.Breakdowns.FindAsync(r.RequestId);
+    if(existing!=null) {
+        var visit=await db.ServiceEvents.SingleOrDefaultAsync(x=>x.BreakdownId==existing.Id);
+        var job=visit==null?null:await db.JobCards.SingleOrDefaultAsync(x=>x.ServiceEventId==visit.Id);
+        if(job!=null)return Results.Ok(new{breakdownNumber=existing.BreakdownNumber,serviceEvent=visit,jobCard=job});
+        return Results.Conflict(new{message="This report already exists. Open it from the breakdown list."});
+    }
+    var b=new Breakdown{Id=r.RequestId,VehicleId=v.Id,BreakdownNumber=$"BD-{DateTime.UtcNow:yyyy}-{(await db.Breakdowns.CountAsync()+1):D6}",Priority=r.Priority,Location=r.Location.Trim(),Complaint=r.Complaint.Trim(),DispatchMode=r.DispatchMode,TriageDecision=r.DispatchMode,Status="Reported"};
+    v.Status="Breakdown";db.Breakdowns.Add(b);
+    db.VehicleAvailabilityLedger.Add(new VehicleAvailabilityLedger{VehicleId=v.Id,State="Breakdown",ReasonCode="Breakdown",SourceType="Breakdown",SourceBreakdownId=b.Id});
+    Audit(db,"CREATE","Breakdown",b.Id,b.BreakdownNumber);
+    var created=await CreateBreakdownServiceAsync(db,b,null,null,true,"Service Supervisor",r.AssignedSupervisor);
+    await transaction.CommitAsync();
+    return Results.Ok(new{breakdownNumber=b.BreakdownNumber,serviceEvent=created.Event,jobCard=created.Job});
+});
+
 app.MapPost("/api/breakdowns", async (BreakdownRequest r, AppDbContext db) =>
 {
     var v=await db.Vehicles.FindAsync(r.VehicleId); if(v is null) return Results.BadRequest(new { message="Vehicle not found." });
@@ -2177,23 +2218,18 @@ app.MapPost("/api/breakdowns", async (BreakdownRequest r, AppDbContext db) =>
 });
 app.MapPost("/api/breakdowns/{id:guid}/convert", async (Guid id, BreakdownConvertRequest r, AppDbContext db) =>
 {
+    await using var transaction=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
     var b=await db.Breakdowns.FindAsync(id); if(b is null) return Results.NotFound();
-    if (await db.ServiceEvents.AnyAsync(x=>x.BreakdownId==id)) return Results.Conflict(new { message="Already converted." });
-    Technician? tech=null;if(r.TechnicianId.HasValue){tech=await db.Technicians.FindAsync(r.TechnicianId.Value);if(tech is null||!tech.IsActive)return Results.BadRequest(new{message="Select an active technician."});}
-    var e=new ServiceEvent { VehicleId=b.VehicleId, BreakdownId=b.Id, EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}", EventType="Breakdown", Priority=b.Priority, Status="Awaiting Assignment" };
-    var j=new JobCard { ServiceEventId=e.Id, JobCardNumber=$"JC-{DateTime.UtcNow:yyyy}-{(await db.JobCards.CountAsync()+1):D6}", Status="Open",Bay=r.Bay?.Trim()??"",TechnicianId=tech?.Id,Technician=tech?.Name??"",StartedAt=null };
-    b.Status="Converted";b.ResponseAt??=DateTime.UtcNow;db.ServiceEvents.Add(e);db.JobCards.Add(j);
-    if(r.GenerateGeneralDiagnosis!=false)
-    {
-        var mr=new MaintenanceRequest{RequestNumber=b.BreakdownNumber,VehicleId=b.VehicleId,Description=$"General diagnosis for breakdown: {b.Complaint}",ComplaintCategoryCode="GENERAL",SymptomCode="OTHER",DiagnosticTemplateCode="DIAG-GENERAL",Priority=b.Priority};
-        await AddDiagnosticWorkAsync(db,j,mr,b.Priority);
-        var created=db.ChangeTracker.Entries<WorkItem>().Select(x=>x.Entity).Where(x=>x.JobCardId==j.Id).ToList();
-        foreach(var task in created)if(tech is not null){task.AssignedToTechnicianId=tech.Id;task.AssignedTo=tech.Name;task.Status="Assigned";}
-        db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=j.Id,WorkItemId=created.FirstOrDefault()?.Id,EntryType="General Diagnosis Added",Comment=$"Created from {b.BreakdownNumber}: {b.Complaint}",CreatedBy=r.ConvertedBy??"Service Supervisor",CreatedRole="Supervisor"});
+    var existingVisit=await db.ServiceEvents.SingleOrDefaultAsync(x=>x.BreakdownId==id);
+    if(existingVisit!=null) {
+        var existingJob=await db.JobCards.SingleOrDefaultAsync(x=>x.ServiceEventId==existingVisit.Id);
+        if(existingJob!=null)return Results.Ok(new{breakdownNumber=b.BreakdownNumber,serviceEvent=existingVisit,jobCard=existingJob});
+        return Results.Conflict(new{message="Service already exists without a Job Card. Contact the service manager."});
     }
-    var by=string.IsNullOrWhiteSpace(r.ConvertedBy)?"Service Supervisor":r.ConvertedBy.Trim();
-    db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=j.Id,EntryType="Breakdown Converted",Comment=$"{b.BreakdownNumber} → {e.EventNumber} → {j.JobCardNumber}",CreatedBy=by,CreatedRole="Supervisor"});
-    Audit(db,"CONVERT","Breakdown",b.Id,$"{b.BreakdownNumber}->{e.EventNumber}->{j.JobCardNumber}",by);await db.SaveChangesAsync();return Results.Ok(new { breakdownNumber=b.BreakdownNumber,serviceEvent=e,jobCard=j });
+    Technician? tech=null;if(r.TechnicianId.HasValue){tech=await db.Technicians.FindAsync(r.TechnicianId.Value);if(tech is null||!tech.IsActive)return Results.BadRequest(new{message="Select an active technician."});}
+    var result=await CreateBreakdownServiceAsync(db,b,tech,r.Bay,r.GenerateGeneralDiagnosis!=false,r.ConvertedBy??"Service Supervisor",r.AssignedSupervisor);
+    await transaction.CommitAsync();
+    return Results.Ok(new { breakdownNumber=b.BreakdownNumber,serviceEvent=result.Event,jobCard=result.Job });
 });
 
 app.MapGet("/api/job-cards/{id:guid}/release-readiness", async (Guid id, AppDbContext db) =>
@@ -2578,7 +2614,8 @@ record WorkItemRequest(string WorkType, string Description, decimal? StandardRep
 record StatusRequest(string Status);
 record CheckInRequest(string ServiceCentre,string Bay,decimal? OdometerKm,decimal? OperatingHours,decimal? EnergyKwh,string AdditionalComplaint,string ArrivalRemarks);
 record BreakdownRequest(Guid VehicleId, string Priority, string Location, string Complaint, string TriageDecision, string DispatchMode);
-record BreakdownConvertRequest(bool? GenerateGeneralDiagnosis,Guid? TechnicianId,string? Bay,string? ConvertedBy);
+record BreakdownConvertRequest(bool? GenerateGeneralDiagnosis,Guid? TechnicianId,string? Bay,string? ConvertedBy,string? AssignedSupervisor = null);
+record BreakdownAssignedRequest(Guid RequestId,Guid VehicleId,string Priority,string Location,string Complaint,string DispatchMode,string AssignedSupervisor);
 record QcRequest(string Inspector, string Result, bool RoadTestRequired, bool RoadTestPassed, string Remarks);
 record ReleaseRequest(string ReleasedBy, string Remarks);
 
