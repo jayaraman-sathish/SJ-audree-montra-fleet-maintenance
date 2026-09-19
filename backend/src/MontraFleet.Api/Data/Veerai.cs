@@ -67,9 +67,15 @@ Each key is an array of at most 8 objects {"text":"...", "sources":["S1"]}. Ever
         foreach(var x in await (from p in db.PartRequests.AsNoTracking() join m in db.PartMasters.AsNoTracking() on p.PartMasterId equals m.Id where p.JobCardId==id orderby p.RequestedAt descending select new {m.PartNumber,m.Description,p.QuantityRequired,p.QuantityIssued,p.QuantityConsumed,p.QuantityReturned,p.Status}).Take(20).ToListAsync(ct)) Add("Part usage (not proof of compatibility)",x);
         foreach(var x in await db.QcInspections.AsNoTracking().Where(x=>x.JobCardId==id).OrderByDescending(x=>x.InspectedAt).Take(5).ToListAsync(ct))
             Add("Recorded QC",new {x.Result,x.RoadTestRequired,x.RoadTestPassed,x.Remarks,x.InspectedAt});
-        var older=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id where e.VehicleId==v.Id && j.Id!=id && e.OpenedAt<=ev.OpenedAt orderby e.OpenedAt descending select new {j.Id,j.JobCardNumber,e.EventType,e.OpenedAt,e.ClosedAt}).Take(5).ToListAsync(ct);
+        var older=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id where e.VehicleId==v.Id && j.Id!=id && e.OpenedAt<=ev.OpenedAt orderby e.OpenedAt descending select new {j.Id,j.JobCardNumber,e.EventType,e.OpenedAt,e.ClosedAt,e.BreakdownId}).Take(5).ToListAsync(ct);
         foreach(var old in older) {
             Add("Previous job on this vehicle",old,old.Id);
+            if(old.BreakdownId is Guid earlierId) {
+                var earlier=await db.Breakdowns.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==earlierId,ct);
+                if(earlier!=null) Add("Previous complaint on this vehicle",new {earlier.Complaint,earlier.ReportedAt},old.Id);
+            }
+            foreach(var earlier in await db.MaintenanceRequests.AsNoTracking().Where(x=>x.JobCardId==old.Id).OrderByDescending(x=>x.RequestedAt).Take(3).ToListAsync(ct))
+                Add("Previous maintenance complaint",new {earlier.Description,earlier.RequestedAt},old.Id);
             foreach(var x in await db.WorkItems.AsNoTracking().Where(x=>x.JobCardId==old.Id).OrderByDescending(x=>x.UpdatedAt).Take(5).ToListAsync(ct))
                 Add("Previous repair on this vehicle",new {x.Description,x.Status,x.CompletionRemarks,x.UpdatedAt},old.Id);
         }
@@ -116,7 +122,7 @@ Each key is an array of at most 8 objects {"text":"...", "sources":["S1"]}. Ever
             try {
                 var analysis=await Analyse(clients.CreateClient("veerai"),c["Veerai:ApiKey"]!,c["Veerai:Model"]!,input.Question,sources,ct);
                 return Results.Ok(new {analysis,sources,analysedAt=DateTime.UtcNow,model=c["Veerai:Model"],notice="AI advisory draft. Check evidence and approved procedures. No service records changed. Reanalyse after recording new work."});
-            } catch(Exception e) when(e is HttpRequestException or JsonException or TaskCanceledException) {
+            } catch(Exception e) when(e is HttpRequestException or JsonException or TaskCanceledException or KeyNotFoundException or InvalidOperationException) {
                 return Results.Json(new {message="Veerai could not produce a complete, evidence-linked analysis. Retry later; your job records have not changed."},statusCode:502);
             }
         }).RequireRateLimiting("veerai");
