@@ -1,0 +1,72 @@
+name: Cypress isolated service flows
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cypress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fleet_test
+          POSTGRES_PASSWORD: isolated_test_only
+          POSTGRES_DB: fleet_cypress
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fleet_test -d fleet_cypress"
+          --health-interval 5s --health-timeout 5s --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build and run code regression checks
+        run: |
+          dotnet build backend/src/MontraFleet.Api/MontraFleet.Api.csproj -c Release
+          dotnet run --project tests/LifecycleChecks/LifecycleChecks.csproj -c Release
+          dotnet run --project tests/VeeraiChecks/VeeraiChecks.csproj -c Release
+      - name: Build application
+        env:
+          NG_CLI_ANALYTICS: 'false'
+        run: |
+          npm install --prefix frontend --package-lock=false
+          npm run build --prefix frontend
+          dotnet publish backend/src/MontraFleet.Api/MontraFleet.Api.csproj -c Release -o /tmp/fleet-browser-app
+          mkdir -p /tmp/fleet-browser-app/wwwroot
+          cp -a frontend/dist/montra-fleet-web/browser/. /tmp/fleet-browser-app/wwwroot/
+      - name: Start isolated application
+        env:
+          DATABASE_URL: 'Host=127.0.0.1;Port=5432;Database=fleet_cypress;Username=fleet_test;Password=isolated_test_only'
+          ASPNETCORE_URLS: 'http://127.0.0.1:5080'
+          ASPNETCORE_ENVIRONMENT: Development
+        run: |
+          cd /tmp/fleet-browser-app
+          dotnet MontraFleet.Api.dll > "$GITHUB_WORKSPACE/backend-test.log" 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:5080/api/vehicles > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          cat "$GITHUB_WORKSPACE/backend-test.log"
+          exit 1
+      - name: Install Cypress
+        run: npm install --prefix tests/browser --package-lock=false
+      - name: Run Cypress browser and API journeys
+        run: npm test --prefix tests/browser
+      - name: Save screenshots, videos and backend log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-test-evidence
+          path: |
+            tests/browser/cypress/screenshots
+            tests/browser/cypress/videos
+            backend-test.log
+          retention-days: 7

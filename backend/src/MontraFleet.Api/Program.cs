@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.RateLimiting;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using MontraFleet.Api.Data;
@@ -7,6 +8,8 @@ using Npgsql;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddHttpClient("veerai", c=>c.Timeout=TimeSpan.FromSeconds(90));
+builder.Services.AddRateLimiter(o=> { o.RejectionStatusCode=429; o.AddFixedWindowLimiter("veerai", l=> { l.PermitLimit=6; l.Window=TimeSpan.FromMinutes(1); l.QueueLimit=0; }); });
 
 var rawConnection =
     Environment.GetEnvironmentVariable("DATABASE_URL")
@@ -40,6 +43,7 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.UseRateLimiter();
 
 using (var scope = app.Services.CreateScope())
 {
@@ -2475,6 +2479,7 @@ app.MapPost("/api/work-orders/{jobCardId:guid}/costs", async (Guid jobCardId,Wor
     db.WorkOrderCosts.Add(x);Audit(db,"CREATE","WorkOrderCost",x.Id,$"{costType}:{x.Amount}",r.PostedBy);
     await db.SaveChangesAsync();return Results.Ok(x);
 });
+app.MapVeeraiEndpoints();
 app.MapControlEndpoints();
 app.MapInventoryEndpoints();
 app.MapServiceReportEndpoints();
