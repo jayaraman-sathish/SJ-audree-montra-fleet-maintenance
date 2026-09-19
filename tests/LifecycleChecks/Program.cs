@@ -1,0 +1,47 @@
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using MontraFleet.Api.Data;
+using MontraFleet.Api.Models;
+
+void Check(bool ok, string name) { if (!ok) throw new Exception("FAILED: " + name); Console.WriteLine("PASS: " + name); }
+var options = new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+await using var db = new AppDbContext(options);
+var vehicle = new Vehicle { RegistrationNumber = "AP39RH4004", Vin = "TEST-VIN", Model = "Rhino", Status = "Under Maintenance" };
+var service = new ServiceEvent { VehicleId = vehicle.Id, EventNumber = "SE-TEST-1", EventType = "PM", Status = "In Progress" };
+var job = new JobCard { ServiceEventId = service.Id, JobCardNumber = "JC-TEST-1", Status = "Open" };
+var task = new WorkItem { JobCardId = job.Id, TaskCode = "T-1", Status = "Not Started" };
+db.AddRange(vehicle, service, job, task);
+db.SaveChanges(); // Deliberately seed the legacy mismatch without the async lifecycle hook.
+await db.ReconcileVisitStatusesAsync();
+Check(job.Status == "In Progress" && service.Status == "In Progress", "Existing mismatch reconciled");
+var logCount = await db.WorkLogEntries.CountAsync();
+await db.ReconcileVisitStatusesAsync();
+Check(await db.WorkLogEntries.CountAsync() == logCount, "Reconciliation is idempotent");
+task.Status = "On Hold"; await db.SaveChangesAsync();
+Check(job.Status == "On Hold" && service.Status == "On Hold", "Hold updates both records");
+task.Status = "In Progress"; await db.SaveChangesAsync();
+Check(job.Status == "In Progress" && service.Status == "In Progress", "Resume clears hold on both records");
+task.Status = "Completed"; await db.SaveChangesAsync();
+Check(service.Status != "Closed" && job.Status != "Completed", "Task completion does not release vehicle");
+var extra = new WorkItem { JobCardId = job.Id, TaskCode = "T-EXTRA", WorkType = "Additional Work", Description = "Replace lamp", Status = "Pending Approval" };
+db.Add(extra); await db.SaveChangesAsync();
+Check(await db.JobCards.CountAsync() == 1 && await db.ServiceEvents.CountAsync() == 1, "Additional work remains under same job");
+db.PartRequests.Add(new PartRequest { JobCardId = job.Id, RequestNumber = "PR-TEST", QuantityRequired = 2, QuantityIssued = 1, Status = "Partially Issued" });
+await db.SaveChangesAsync();
+var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+using var search = JsonDocument.Parse(JsonSerializer.Serialize(await LinkedSearch.FindAsync(db, "AP39RH4004"), jsonOptions));
+var visits = search.RootElement.GetProperty("results").EnumerateArray().Where(x => x.GetProperty("type").GetString() == "Service Visit").ToList();
+Check(visits.Count == 1, "Search groups event and job in one visit");
+var summary = visits[0].GetProperty("jobs")[0];
+Check(summary.GetProperty("tasksTotal").GetInt32() == 2 && summary.GetProperty("tasksCompleted").GetInt32() == 1, "Task counts include additional work");
+Check(summary.GetProperty("partsWaiting").GetInt32() == 1, "Partially issued parts remain waiting");
+Check(summary.GetProperty("additionalWork").GetArrayLength() == 1, "Additional work exposed beneath job");
+using var byJob = JsonDocument.Parse(JsonSerializer.Serialize(await LinkedSearch.FindAsync(db, "JC-TEST-1"), jsonOptions));
+Check(byJob.RootElement.GetProperty("results").GetArrayLength() == 1, "Job reference finds linked visit without duplicates");
+service.Status = "Closed"; service.ClosedAt = DateTime.UtcNow; job.Status = "Completed";
+await db.SaveChangesAsync();
+task.Status = "In Progress"; await db.SaveChangesAsync();
+Check(service.Status == "Closed" && job.Status == "Completed", "Task change cannot reopen a released visit");
+Check(LifecycleRules.Resolve("Open", "Open", new[] { "Assigned" }, true, true) == ("Assigned", "Assigned"), "Assignment synchronization");
+Check(await db.WorkLogEntries.AnyAsync(x => x.EntryType == "Task Update"), "Task transitions logged in timeline");
+Console.WriteLine("Lifecycle and grouped-search checks passed (in-memory provider; not PostgreSQL integration tests).");

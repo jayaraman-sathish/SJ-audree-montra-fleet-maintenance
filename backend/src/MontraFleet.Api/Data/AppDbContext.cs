@@ -3,7 +3,7 @@ using MontraFleet.Api.Models;
 
 namespace MontraFleet.Api.Data;
 
-public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
+public partial class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     public DbSet<Vehicle> Vehicles => Set<Vehicle>();
     public DbSet<MasterOption> MasterOptions => Set<MasterOption>();
