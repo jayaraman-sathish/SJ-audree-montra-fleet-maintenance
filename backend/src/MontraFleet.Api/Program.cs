@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
@@ -8,6 +9,7 @@ using Npgsql;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddDataProtection();
 builder.Services.AddHttpClient("veerai", c=>c.Timeout=TimeSpan.FromSeconds(90));
 builder.Services.AddRateLimiter(o=> { o.RejectionStatusCode=429; o.AddFixedWindowLimiter("veerai", l=> { l.PermitLimit=6; l.Window=TimeSpan.FromMinutes(1); l.QueueLimit=0; }); });
 
@@ -2480,6 +2482,7 @@ app.MapPost("/api/work-orders/{jobCardId:guid}/costs", async (Guid jobCardId,Wor
     await db.SaveChangesAsync();return Results.Ok(x);
 });
 app.MapVeeraiEndpoints();
+app.MapVeeraiChat();
 app.MapControlEndpoints();
 app.MapInventoryEndpoints();
 app.MapServiceReportEndpoints();

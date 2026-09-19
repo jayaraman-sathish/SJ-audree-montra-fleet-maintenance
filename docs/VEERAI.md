@@ -22,3 +22,15 @@ Output is an advisory draft. The server rejects missing/unknown citations, incom
 Automated checks exercise evidence scoping, response validation, credentials, provider request construction and unavailable-provider UI. Provider replies in protocol tests are explicit fixtures, not live reasoning. A live model quality evaluation using approved case histories is still required after configuring credentials. Existing Cypress service journeys run against isolated PostgreSQL only.
 
 API transport: https://developers.openai.com/api/reference/resources/responses/methods/create
+
+## v1.8.22 conversational chat
+
+The global launcher opens a compact, draggable, minimisable chat. Type a Montra service question directly. Current workspace context is used automatically. A vehicle or Job Card mentioned in the question resolves server-side; multiple visits produce conversational choices. Unknown references never silently substitute the previous job. General Montra guidance is available without a service record; it is not an OEM manual lookup.
+
+The chat uses `Veerai__Enabled`, `Veerai__ApiKey` and `Veerai__Model` on the server. The access key is entered once to unlock this browser for eight hours, not attached to each chat question. The server issues an encrypted, HttpOnly, SameSite=Strict cookie; production cookies are Secure. Key rotation invalidates existing sessions. The legacy analysis endpoint retains its access-key check. Chat remains protected and this release does not add individual user sign-in. It shares the existing six-requests-per-minute instance limiter. Configure provider project spending limits. Do not embed provider credentials in frontend code.
+
+Chat is temporary browser memory, reset on workspace navigation or New chat; minimise preserves it. The server receives at most ten recent UI messages and bounded job evidence, with `store:false`. No fleet records are modified. Structured output separates relevance, reply and valid evidence IDs. Relevance is model judgement, not a guaranteed semantic security boundary. No speech input, images, manuals or telemetry are integrated.
+
+Provider HTTP errors distinguish credentials, quota, model/request rejection, timeout and malformed output without returning provider bodies or secrets. The previous generic error cannot establish which one happened in production. Cypress uses simulated replies; local backend checks test context resolution and schema validation, not live model diagnostic quality.
+
+Provider format follows https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses.
