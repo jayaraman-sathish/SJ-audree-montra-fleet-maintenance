@@ -63,3 +63,44 @@ foreach(var kind in new[] { "PM", "Breakdown", "Maintenance" })
     work.Status = "In Progress"; await db.SaveChangesAsync();
     Check(visit.Status == "In Progress" && card.Status == "In Progress", kind + ": work starts linked lifecycle");
 }
+
+// Release gate regression cases apply equally to PM, Breakdown and Maintenance.
+foreach(var eventType in new[]{"PM","Breakdown","Maintenance"})
+{
+    await using var releaseDb = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+    var v = new Vehicle { RegistrationNumber="RELEASE-TEST" };
+    var e = new ServiceEvent { VehicleId=v.Id, EventType=eventType, AssignedSupervisor="Supervisor" };
+    var j = new JobCard { ServiceEventId=e.Id };
+    var t = new WorkItem { JobCardId=j.Id, Status="Assigned", UpdatedAt=DateTime.UtcNow.AddMinutes(-10) };
+    var i = new WorkTemplateInstance { JobCardId=j.Id, WorkItemId=t.Id };
+    var f = new WorkTemplateFieldInstance { WorkTemplateInstanceId=i.Id, IsMandatory=true, Value="No", Result="Pass", ExecutedAt=DateTime.UtcNow.AddMinutes(-10) };
+    releaseDb.AddRange(v,e,j,t,i,f);releaseDb.SaveChanges();
+    var gate=await ReleaseReadiness.ReadAsync(releaseDb,j.Id);
+    Check(!gate.CanQc && gate.Blockers.Any(b=>b.Kind=="Task"),eventType+": completed checks do not complete task");
+    t.Status="Completed";releaseDb.SaveChanges();
+    gate=await ReleaseReadiness.ReadAsync(releaseDb,j.Id);
+    Check(gate.CanQc&&!gate.CanRelease,eventType+": completed work awaits QC");
+    var qc=new QcInspection { JobCardId=j.Id, Result="Pass", InspectedAt=DateTime.UtcNow };
+    releaseDb.Add(qc);releaseDb.SaveChanges();
+    Check((await ReleaseReadiness.ReadAsync(releaseDb,j.Id)).CanRelease,eventType+": ready after passing QC; No is valid");
+    var cancelled=new WorkItem { JobCardId=j.Id, Status="Cancelled" };releaseDb.Add(cancelled);releaseDb.SaveChanges();
+    Check((await ReleaseReadiness.ReadAsync(releaseDb,j.Id)).CanRelease,eventType+": cancelled task does not block");
+    f.Result="Fail";releaseDb.SaveChanges();
+    Check(!(await ReleaseReadiness.ReadAsync(releaseDb,j.Id)).CanQc,eventType+": failed check blocks QC");
+    f.Result="Pass";f.ExecutedAt=DateTime.UtcNow.AddMinutes(1);releaseDb.SaveChanges();
+    Check((await ReleaseReadiness.ReadAsync(releaseDb,j.Id)).QcStatus=="Recheck required",eventType+": changed work invalidates old QC");
+    qc.InspectedAt=DateTime.UtcNow.AddMinutes(2);qc.RoadTestRequired=true;releaseDb.SaveChanges();
+    Check(!(await ReleaseReadiness.ReadAsync(releaseDb,j.Id)).CanRelease,eventType+": required road test blocks release");
+    qc.RoadTestPassed=true;var part=new PartRequest { JobCardId=j.Id, Status="Issued" };releaseDb.Add(part);releaseDb.SaveChanges();
+    Check(!(await ReleaseReadiness.ReadAsync(releaseDb,j.Id)).CanQc,eventType+": issued parts must be resolved");
+    part.Status="Consumed";releaseDb.SaveChanges();
+    Check((await ReleaseReadiness.ReadAsync(releaseDb,j.Id)).CanRelease,eventType+": consumed parts clear gate");
+    var defect=new Defect { JobCardId=j.Id, Disposition="Open", Description="Unresolved issue" };releaseDb.Add(defect);releaseDb.SaveChanges();
+    Check(!(await ReleaseReadiness.ReadAsync(releaseDb,j.Id)).CanRelease,eventType+": open issue blocks release");
+    defect.Disposition="Closed";e.AssignedSupervisor="";releaseDb.SaveChanges();
+    Check(!(await ReleaseReadiness.ReadAsync(releaseDb,j.Id)).CanQc,eventType+": supervisor assignment required");
+    e.AssignedSupervisor="Supervisor";
+    e.Status="Closed";releaseDb.SaveChanges();
+    gate=await ReleaseReadiness.ReadAsync(releaseDb,j.Id);
+    Check(gate.Released&&!gate.CanRelease&&await ReleaseReadiness.TaskIsClosedAsync(releaseDb,t.Id),eventType+": released service cannot release or execute again");
+}

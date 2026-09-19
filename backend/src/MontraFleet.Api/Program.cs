@@ -1140,10 +1140,13 @@ app.MapGet("/api/tasks/{workItemId:guid}/paper-form", async(Guid workItemId,AppD
 });
 app.MapPut("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}", async(Guid workItemId,Guid fieldId,WorkTemplateFieldResultRequest r,AppDbContext db)=>
 {
+    if(await ReleaseReadiness.TaskIsClosedAsync(db,workItemId)) return Results.Conflict(new { message="This service or task is closed/cancelled. Execution cannot be changed." });
     var instance=await db.WorkTemplateInstances.FirstOrDefaultAsync(x=>x.WorkItemId==workItemId);if(instance is null)return Results.NotFound();
     var f=await db.WorkTemplateFieldInstances.FirstOrDefaultAsync(x=>x.Id==fieldId&&x.WorkTemplateInstanceId==instance.Id);if(f is null)return Results.NotFound();
     f.Value=r.Value;f.Result=r.Result;f.Remarks=r.Remarks;f.EvidenceReference=r.EvidenceReference;f.ExecutedBy=r.ExecutedBy;f.ExecutedAt=DateTime.UtcNow;
-    if(instance.Status=="Not Started")instance.Status="In Progress";
+    instance.Status="In Progress";instance.CompletedAt=null;
+    var editedTask=await db.WorkItems.FindAsync(workItemId);
+    if(editedTask != null) { editedTask.Status="In Progress";editedTask.UpdatedAt=DateTime.UtcNow; }
     var failed=string.Equals(r.Result,"Fail",StringComparison.OrdinalIgnoreCase)||string.Equals(r.Result,"Not OK",StringComparison.OrdinalIgnoreCase);
     var issuePrompt=failed&&(string.Equals(f.FailureAction,"Create Defect",StringComparison.OrdinalIgnoreCase)||string.Equals(f.FailureAction,"Block Completion",StringComparison.OrdinalIgnoreCase));
     var issueRecorded=await db.Defects.AnyAsync(d=>d.ChecklistFieldInstanceId==f.Id&&d.Disposition!="Closed");
@@ -1153,6 +1156,7 @@ app.MapPut("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}", async(Guid 
 
 app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/issue", async(Guid workItemId,Guid fieldId,TechnicianIssueRequest r,AppDbContext db)=>
 {
+    if(await ReleaseReadiness.TaskIsClosedAsync(db,workItemId)) return Results.Conflict(new { message="This service or task is closed/cancelled. Execution cannot be changed." });
     var instance=await db.WorkTemplateInstances.FirstOrDefaultAsync(x=>x.WorkItemId==workItemId);if(instance is null)return Results.NotFound();
     var f=await db.WorkTemplateFieldInstances.FirstOrDefaultAsync(x=>x.Id==fieldId&&x.WorkTemplateInstanceId==instance.Id);if(f is null)return Results.NotFound();
     var existing=await db.Defects.FirstOrDefaultAsync(d=>d.ChecklistFieldInstanceId==fieldId&&d.Disposition!="Closed");
@@ -1183,6 +1187,7 @@ app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/issue", asyn
 
 app.MapPost("/api/tasks/{workItemId:guid}/paper-form/complete", async(Guid workItemId,AppDbContext db)=>
 {
+    if(await ReleaseReadiness.TaskIsClosedAsync(db,workItemId)) return Results.Conflict(new { message="This service or task is closed/cancelled. Execution cannot be changed." });
     var instance=await db.WorkTemplateInstances.FirstOrDefaultAsync(x=>x.WorkItemId==workItemId);if(instance is null)return Results.NotFound();
     var fields=await db.WorkTemplateFieldInstances.Where(x=>x.WorkTemplateInstanceId==instance.Id).ToListAsync();
     var missing=fields.Where(x=>x.IsMandatory&&(string.IsNullOrWhiteSpace(x.Value)||x.Result=="Pending")).Select(x=>x.Label).ToList();
@@ -1754,12 +1759,15 @@ app.MapPost("/api/tasks", async (TaskRequest r, AppDbContext db) =>
 
 app.MapPut("/api/tasks/{id:guid}/status", async (Guid id, TaskStatusRequest r, AppDbContext db) =>
 {
+    if(await ReleaseReadiness.TaskIsClosedAsync(db,id)) return Results.Conflict(new { message="This service or task is closed/cancelled. Execution cannot be changed." });
     var t=await db.WorkItems.FindAsync(id);if(t is null)return Results.NotFound();
     var allowed=new[]{"Pending Approval","Not Started","Assigned","In Progress","On Hold","Completed","Cancelled"};if(!allowed.Contains(r.Status))return Results.BadRequest(new{message="Invalid task status."});
     if(r.Status=="In Progress"&&!t.AssignedToTechnicianId.HasValue)return Results.Conflict(new{message="Assign a technician before starting this work."});
     if(r.Status=="In Progress" && t.DependencyTaskId.HasValue && t.WorkType!="Corrective Repair"){var d=await db.WorkItems.FindAsync(t.DependencyTaskId.Value);if(d!=null&&d.Status!="Completed")return Results.Conflict(new{message=$"Dependency {d.TaskCode} must be completed first."});}
     if(r.Status=="Completed"&&(t.WorkType=="Corrective Repair"||t.WorkType=="Additional Work")&&string.IsNullOrWhiteSpace(r.CompletionRemarks))
         return Results.Conflict(new{message="Record the work performed before completing this task."});
+    if(r.Status=="Completed" && await db.WorkTemplateInstances.AnyAsync(x=>x.WorkItemId==id && x.Status!="Completed"))
+        return Results.Conflict(new { message="Complete this task using its checklist form first." });
     t.Status=r.Status;t.ActualHours=r.ActualHours??t.ActualHours;t.CompletionRemarks=r.CompletionRemarks??t.CompletionRemarks;t.EvidenceReference=r.EvidenceReference??t.EvidenceReference;t.UpdatedAt=DateTime.UtcNow;
     if(r.Status=="In Progress")
     {
@@ -1772,6 +1780,7 @@ app.MapPut("/api/tasks/{id:guid}/status", async (Guid id, TaskStatusRequest r, A
 
 app.MapPut("/api/tasks/{id:guid}/assign", async (Guid id, TaskAssignRequest r, AppDbContext db) =>
 {
+    if(await ReleaseReadiness.TaskIsClosedAsync(db,id)) return Results.Conflict(new { message="This service or task is closed/cancelled. Execution cannot be changed." });
     var t=await db.WorkItems.FindAsync(id);if(t is null)return Results.NotFound();var tech=await db.Technicians.FindAsync(r.TechnicianId);
     if(t.Status=="Pending Approval")return Results.Conflict(new{message="Supervisor approval is required before assignment."});
     if(tech is null||!tech.IsActive)return Results.BadRequest(new{message="Technician not active."});
@@ -1845,7 +1854,10 @@ app.MapPost("/api/job-cards/{id:guid}/work-items", async (Guid id, WorkItemReque
 });
 app.MapPut("/api/work-items/{id:guid}/status", async (Guid id, StatusRequest r, AppDbContext db) =>
 {
-    var w=await db.WorkItems.FindAsync(id);if(w is null)return Results.NotFound();w.Status=r.Status;w.UpdatedAt=DateTime.UtcNow;Audit(db,"STATUS","Task",w.Id,r.Status);await db.SaveChangesAsync();return Results.Ok(w);
+    if(await ReleaseReadiness.TaskIsClosedAsync(db,id)) return Results.Conflict(new { message="This service or task is closed/cancelled. Execution cannot be changed." });
+    var w=await db.WorkItems.FindAsync(id);if(w is null)return Results.NotFound();
+    if(r.Status=="Completed" && await db.WorkTemplateInstances.AnyAsync(x=>x.WorkItemId==id && x.Status!="Completed")) return Results.Conflict(new { message="Complete this task using its checklist form first." });
+    w.Status=r.Status;w.UpdatedAt=DateTime.UtcNow;Audit(db,"STATUS","Task",w.Id,r.Status);await db.SaveChangesAsync();return Results.Ok(w);
 });
 
 app.MapGet("/api/labour", async (Guid? jobCardId, AppDbContext db) =>
@@ -1877,7 +1889,7 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}/execution",async(Guid jobCar
     var sections=inst.Select(i=>{var wi=items.FirstOrDefault(x=>x.Id==i.WorkItemId);var fs=fields.Where(f=>f.WorkTemplateInstanceId==i.Id).Select(f=>new{f.Id,f.Sequence,f.FieldCode,f.Label,f.FieldType,f.ActionCode,f.Specification,f.Severity,f.UnitCode,f.IsMandatory,f.MinValue,f.MaxValue,f.Options,f.FailureAction,f.SuggestedIssueCode,f.Value,f.Result,f.Remarks,f.EvidenceReference,f.ExecutedAt,f.ExecutedBy,issueRecorded=issueIds.Contains(f.Id)});return new{workItemId=i.WorkItemId,taskCode=wi?.TaskCode??"",workType=wi?.WorkType??"",description=wi?.Description??"",templateCode=i.TemplateCode,name=i.TemplateName,status=wi?.Status??i.Status,completed=fs.Count(x=>x.Result!="Pending"&&x.Value!=""),total=fs.Count(),fields=fs};});
     var corrective=items.Where(x=>x.WorkType=="Corrective Repair").Select(x=>{var d=defects.FirstOrDefault(z=>z.CorrectiveWorkItemId==x.Id);var f=d?.ChecklistFieldInstanceId is Guid fieldKey?fields.FirstOrDefault(z=>z.Id==fieldKey):null;return new{x.Id,x.TaskCode,x.Description,x.Status,x.Priority,x.DependencyTaskId,x.AssignedToTechnicianId,x.AssignedTo,x.ActualHours,x.CompletionRemarks,defectId=d?.Id,originFieldId=d?.ChecklistFieldInstanceId,originCode=f?.FieldCode??"",originLabel=f?.Label??"",issue=d?.Description??"",severity=d?.Severity??""};});return Results.Ok(new{sections,corrective});
 });
-app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck-pass",async(Guid workItemId,Guid fieldId,AppDbContext db)=>{var d=await db.Defects.FirstOrDefaultAsync(x=>x.ChecklistFieldInstanceId==fieldId&&x.Disposition!="Closed");if(d is null)return Results.NotFound(new{message="No open issue found."});if(d.CorrectiveWorkItemId.HasValue){var c=await db.WorkItems.FindAsync(d.CorrectiveWorkItemId.Value);if(c!=null&&c.Status!="Completed")return Results.Conflict(new{message="Complete the corrective work before recheck."});}d.Disposition="Closed";d.ClosedAt=DateTime.UtcNow;var f=await db.WorkTemplateFieldInstances.FindAsync(fieldId);if(f!=null){f.Result="Pass";f.Value=f.FieldType=="OK/Not OK"?"OK":"Pass";f.ExecutedAt=DateTime.UtcNow;}await db.SaveChangesAsync();return Results.Ok();});
+app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck-pass",async(Guid workItemId,Guid fieldId,AppDbContext db)=>{if(await ReleaseReadiness.TaskIsClosedAsync(db,workItemId))return Results.Conflict(new{message="This service or task is closed/cancelled."});var d=await db.Defects.FirstOrDefaultAsync(x=>x.ChecklistFieldInstanceId==fieldId&&x.Disposition!="Closed");if(d is null)return Results.NotFound(new{message="No open issue found."});if(d.CorrectiveWorkItemId.HasValue){var c=await db.WorkItems.FindAsync(d.CorrectiveWorkItemId.Value);if(c!=null&&c.Status!="Completed")return Results.Conflict(new{message="Complete the corrective work before recheck."});}d.Disposition="Closed";d.ClosedAt=DateTime.UtcNow;var f=await db.WorkTemplateFieldInstances.FindAsync(fieldId);if(f!=null){f.Result="Pass";f.Value=f.FieldType=="OK/Not OK"?"OK":"Pass";f.ExecutedAt=DateTime.UtcNow;}await db.SaveChangesAsync();return Results.Ok();});
 app.MapGet("/api/service-workspace/{jobCardId:guid}/timeline", async (Guid jobCardId, AppDbContext db) =>
 {
     var job = await db.JobCards.AsNoTracking().FirstOrDefaultAsync(x => x.Id == jobCardId);
@@ -1911,6 +1923,7 @@ app.MapGet("/api/service-workspace/{jobCardId:guid}/timeline", async (Guid jobCa
 
 app.MapPost("/api/tasks/{workItemId:guid}/paper-form/{fieldId:guid}/recheck",async(Guid workItemId,Guid fieldId,RecheckRequest r,AppDbContext db)=>
 {
+    if(await ReleaseReadiness.TaskIsClosedAsync(db,workItemId)) return Results.Conflict(new { message="This service or task is closed/cancelled. Execution cannot be changed." });
     var d=await db.Defects.FirstOrDefaultAsync(x=>x.ChecklistFieldInstanceId==fieldId&&x.Disposition!="Closed");
     if(d is null)return Results.NotFound(new{message="No open issue found."});
     if(d.CorrectiveWorkItemId.HasValue){var c=await db.WorkItems.FindAsync(d.CorrectiveWorkItemId.Value);if(c!=null&&c.Status!="Completed")return Results.Conflict(new{message="Complete the corrective work before recheck."});}
@@ -2183,22 +2196,33 @@ app.MapPost("/api/breakdowns/{id:guid}/convert", async (Guid id, BreakdownConver
     Audit(db,"CONVERT","Breakdown",b.Id,$"{b.BreakdownNumber}->{e.EventNumber}->{j.JobCardNumber}",by);await db.SaveChangesAsync();return Results.Ok(new { breakdownNumber=b.BreakdownNumber,serviceEvent=e,jobCard=j });
 });
 
+app.MapGet("/api/job-cards/{id:guid}/release-readiness", async (Guid id, AppDbContext db) =>
+{
+    if (!await db.JobCards.AnyAsync(x => x.Id == id)) return Results.NotFound();
+    return Results.Ok(await ReleaseReadiness.ReadAsync(db, id));
+});
+
 app.MapPost("/api/job-cards/{id:guid}/qc", async (Guid id, QcRequest r, AppDbContext db) =>
 {
     if (!await db.JobCards.AnyAsync(x=>x.Id==id)) return Results.NotFound();
+    var readiness = await ReleaseReadiness.ReadAsync(db, id);
+    if (!readiness.CanQc) return Results.Conflict(new { message="Complete outstanding work before QC.", blockers=readiness.Blockers });
+    if (r.Result != "Pass" && r.Result != "Fail") return Results.BadRequest(new { message="QC result must be Pass or Fail." });
+    if (string.IsNullOrWhiteSpace(r.Inspector)) return Results.BadRequest(new { message="Inspector name is required." });
     var qc=new QcInspection { JobCardId=id, Inspector=r.Inspector, Result=r.Result, RoadTestRequired=r.RoadTestRequired, RoadTestPassed=r.RoadTestPassed, Remarks=r.Remarks, InspectedAt=DateTime.UtcNow };
     db.QcInspections.Add(qc); Audit(db,"QC","JobCard",id,r.Result); await db.SaveChangesAsync(); return Results.Ok(qc);
 });
 
 app.MapPost("/api/service-events/{id:guid}/release", async (Guid id, ReleaseRequest r, AppDbContext db) =>
 {
+    await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
     var e=await db.ServiceEvents.FindAsync(id); if(e is null) return Results.NotFound();
+    if (e.Status == "Closed") return Results.Ok(new { message="Vehicle already released." });
     var j=await db.JobCards.FirstOrDefaultAsync(x=>x.ServiceEventId==id); if(j is null) return Results.BadRequest(new { message="Job card not found." });
-    if (await db.WorkItems.AnyAsync(x=>x.JobCardId==j.Id && x.Status!="Completed")) return Results.Conflict(new { message="All work items must be completed before release." });
-    if (await db.PartRequests.AnyAsync(x=>x.JobCardId==j.Id && x.Status!="Consumed" && x.Status!="Returned" && x.Status!="Cancelled")) return Results.Conflict(new { message="Open parts requests must be resolved before release." });
-    var latestQc=await db.QcInspections.Where(x=>x.JobCardId==j.Id).OrderByDescending(x=>x.InspectedAt).FirstOrDefaultAsync();
-    if (latestQc is null || latestQc.Result!="Pass" || (latestQc.RoadTestRequired && !latestQc.RoadTestPassed))
-        return Results.Conflict(new { message="Passing QC is required before release." });
+    var readiness = await ReleaseReadiness.ReadAsync(db, j.Id);
+    if (!readiness.CanRelease) return Results.Conflict(new { message="Release blocked. Resolve the listed items first.", blockers=readiness.Blockers });
+    if (await db.ServiceEvents.AnyAsync(x => x.VehicleId == e.VehicleId && x.Id != e.Id && x.Status != "Closed" && x.Status != "Cancelled"))
+        return Results.Conflict(new { message="Another active service exists for this vehicle. Resolve it before release." });
     var v=await db.Vehicles.FindAsync(e.VehicleId); if(v is null) return Results.BadRequest();
     var rel=new VehicleRelease { ServiceEventId=e.Id, VehicleId=v.Id, ReleaseStatus="Released", ReleasedBy=r.ReleasedBy, ReleasedAt=DateTime.UtcNow, Remarks=r.Remarks };
     e.Status="Closed"; e.ClosedAt=DateTime.UtcNow; j.Status="Completed"; j.CompletedAt=DateTime.UtcNow; v.Status="Available";
@@ -2211,7 +2235,8 @@ app.MapPost("/api/service-events/{id:guid}/release", async (Guid id, ReleaseRequ
         var po=await db.PmObligations.FindAsync(e.PmObligationId.Value);
         if(po is not null){po.Status="Completed";po.CompletedAt=DateTime.UtcNow;await db.SaveChangesAsync();await GenerateNextPmObligationAsync(db,po,v);}
     }
-    await db.SaveChangesAsync(); return Results.Ok(rel);
+    if(e.BreakdownId.HasValue) { var breakdown=await db.Breakdowns.FindAsync(e.BreakdownId.Value); if(breakdown != null) { breakdown.Status="Restored"; breakdown.RestoredAt=DateTime.UtcNow; } }
+    await db.SaveChangesAsync(); await transaction.CommitAsync(); return Results.Ok(rel);
 });
 
 app.MapGet("/api/audit", async (AppDbContext db) => Results.Ok(await db.AuditEvents.AsNoTracking().OrderByDescending(x=>x.OccurredAt).Take(250).ToListAsync()));
