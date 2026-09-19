@@ -22,7 +22,7 @@ export class FleetGridDirective implements AfterViewInit, OnDestroy {
     Array.from(head.cells).forEach((cell,i)=>cell.classList.toggle('fleet-action-cell',/^actions?$/i.test(headers[i])));
     table.setAttribute('role','table');
     for(const row of rows){
-      if(row===head)continue;
+      if(row===head||row.classList.contains('fleet-detail-row'))continue;
       const cells=Array.from(row.cells);
       const record=cells.length===headers.length&&cells.every(cell=>cell.colSpan===1&&cell.rowSpan===1&&cell.tagName==='TD');
       const empty=cells.length===1&&!!row.querySelector('.empty')||row.classList.contains('empty');

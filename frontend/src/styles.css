@@ -23,7 +23,7 @@ html{font-size:14px}body{line-height:1.45}button,a,input,select,textarea{touch-a
 .shell main table[fleetGrid] td{font-size:12px;line-height:1.5;padding:12px 10px;vertical-align:top}
 .shell main table[fleetGrid] .fleet-reference-cell{white-space:nowrap;min-width:115px}
 .shell main table[fleetGrid] .date-cell{min-width:114px}
-.shell main table[fleetGrid] .fleet-action-cell{position:sticky;right:0;z-index:2;background:#fff;box-shadow:-1px 0 #e5ebf3;min-width:115px}
+.shell main table[fleetGrid] .fleet-action-cell{position:static;background:#fff;min-width:115px}
 .shell main table[fleetGrid] .fleet-action-cell a,.shell main table[fleetGrid] .fleet-action-cell button{display:inline-flex;align-items:center;min-height:36px;max-width:100%;background:transparent!important;border:0!important;color:#145cb7!important;box-shadow:none!important;text-decoration:underline!important;text-underline-offset:3px;padding:6px 4px!important;line-height:1.4!important;font-size:12px!important;white-space:nowrap}
 .shell main table[fleetGrid] .fleet-action-cell button:disabled{color:#8492a4!important;cursor:not-allowed;text-decoration:none!important}
 .shell main table[fleetGrid] tr:hover>td{background-color:#f8fbff}
@@ -34,6 +34,7 @@ html{font-size:14px}body{line-height:1.45}button,a,input,select,textarea{touch-a
  .shell main table.fleet-records{display:block!important;min-width:0!important;width:100%!important}
  .shell main table.fleet-records thead,.shell main table.fleet-records .fleet-header-row{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;overflow:hidden!important;clip:rect(0,0,0,0);white-space:nowrap}
  .shell main table.fleet-records tbody{display:grid!important;gap:12px}
+ .shell main table.fleet-records .fleet-detail-row,.shell main table.fleet-records .fleet-detail-row>td{display:block!important;width:100%!important;border:0!important;padding:0!important}
  .shell main table.fleet-records .fleet-data-row{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;border:1px solid #dce4ee!important;border-radius:10px!important;margin:0 0 12px!important;padding:10px!important;background:#fff}
  .shell main table.fleet-records .fleet-data-row>td{display:block!important;position:static!important;min-width:0!important;max-width:none!important;border:0!important;box-shadow:none!important;padding:8px!important;white-space:normal!important}
  .shell main table.fleet-records .fleet-data-row>td::before{content:attr(data-field)!important;display:block!important;font-size:11px!important;color:#64748b!important;font-weight:500!important;margin-bottom:5px!important}
