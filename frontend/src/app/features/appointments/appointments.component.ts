@@ -1,3 +1,4 @@
+import {FleetGridDirective} from '../../shared/fleet-grid.directive';
 import { FleetDateComponent } from '../../shared/fleet-date.component';
 import {Component,OnInit} from '@angular/core';
 import {CommonModule} from '@angular/common';
@@ -5,7 +6,7 @@ import {FormsModule} from '@angular/forms';
 import {HttpClient} from '@angular/common/http';
 import {Router} from '@angular/router';
 
-@Component({selector:'app-appointments',standalone:true,imports:[FleetDateComponent,CommonModule,FormsModule],template:`
+@Component({selector:'app-appointments',standalone:true,imports:[FleetGridDirective,FleetDateComponent,CommonModule,FormsModule],template:`
 <section class="page">
 <div class="title"><div><h2>Appointments & Capacity</h2><p>Appointment = when and where the vehicle will visit. PM appointments originate from PM Obligations.</p></div><button type="button" class="btn btn-primary" (click)="openCreate()">+ Appointment</button></div>
 <div class="info"><b>Planned PM:</b> schedule from <b>PM Obligations</b>. Repair/inspection/campaign visits can be created here. Technician/team assignment happens after check-in.</div>
@@ -58,7 +59,7 @@ import {Router} from '@angular/router';
  <div class="error" *ngIf="message">{{message}}</div>
 </div>
 
-<div class="card"><table><tr><th>No.</th><th>Vehicle</th><th>Source</th><th>Service</th><th>Start</th><th>Bay</th><th>Status</th><th>Action</th></tr>
+<div class="card"><div class="fleet-grid-scroll" role="region" aria-label="Records" tabindex="0"><table fleetGrid><tr><th>No.</th><th>Vehicle</th><th>Source</th><th>Service</th><th>Start</th><th>Bay</th><th>Status</th><th>Action</th></tr>
 <tr *ngFor="let x of rows"><td>{{x.appointmentNumber}}</td><td><b>{{x.vehicle}}</b></td><td>{{x.sourceType}}<small>{{sourceDetail(x)}}</small></td><td>{{serviceLabel(x)}}</td><td class="date-cell"><app-fleet-date [value]="x.startAt"></app-fleet-date></td><td>{{x.bay}}</td><td>{{x.status}}</td><td class="act">
 <button *ngIf="x.status==='Requested'" class="btn btn-outline" (click)="setStatus(x,'Confirmed')">Confirm</button>
 <button *ngIf="x.status==='Requested'||x.status==='Confirmed'" class="btn btn-primary" (click)="openCheckin(x)">Check In Vehicle</button>
@@ -66,7 +67,7 @@ import {Router} from '@angular/router';
 <button *ngIf="x.status==='Requested'||x.status==='Confirmed'" class="btn btn-outline" (click)="setStatus(x,'Cancelled')">Cancel</button>
 <span *ngIf="x.status==='In Progress'">In workshop</span>
 </td></tr>
-<tr *ngIf="!rows.length"><td colspan="8" class="empty">No appointments yet.</td></tr></table></div>
+<tr *ngIf="!rows.length"><td colspan="8" class="empty">No appointments yet.</td></tr></table></div></div>
 </section>`,styles:[`.page{padding:26px}.title{display:flex;justify-content:space-between;align-items:center}.title p{color:#64748b}.info{background:#eef6ff;border:1px solid #bfdbfe;padding:10px 12px;border-radius:8px;margin:12px 0}.card{margin-top:14px}.capacity{display:flex;gap:22px}.capacity div{display:flex;flex-direction:column}.capacity span{color:#64748b;font-size:12px}.modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:1000}.modal-card{position:fixed;z-index:1001;left:50%;top:50%;transform:translate(-50%,-50%);width:min(880px,94vw);max-height:90vh;overflow:auto;background:#fff;border-radius:12px;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.2)}.modal-head{display:flex;justify-content:space-between}.modal-head h3{margin:0}.modal-head p{margin:4px 0;color:#64748b}.icon-btn{border:0;background:transparent;font-size:28px}.fields{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:18px 0}.wide{grid-column:1/-1}label{font-size:12px}label small{display:block;color:#64748b;margin-top:4px}input,select,textarea{display:block;width:100%;box-sizing:border-box;padding:9px;margin-top:4px}textarea{min-height:64px}.actions{display:flex;justify-content:flex-end;gap:8px}.error{color:#b91c1c;margin-top:8px}.act{display:flex;gap:5px;align-items:center;flex-wrap:wrap}.empty{text-align:center;color:#64748b;padding:14px}.check-summary{display:flex;gap:8px;margin:14px 0;flex-wrap:wrap}.check-summary span,.source-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;font-size:12px}.check-summary b{margin-left:4px}.open-req{background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:9px 10px;font-size:12px}.source-box{display:flex;gap:10px;align-items:center;margin:8px 0}.source-box small{margin-left:auto;color:#64748b}.request-list{border:1px solid #e2e8f0;border-radius:8px;margin:12px 0}.request-row{display:flex;gap:10px;padding:10px;border-bottom:1px solid #e5e7eb;align-items:flex-start}.request-row:last-child{border-bottom:0}.request-row input{width:auto;margin-top:3px}.request-row span{flex:1}.request-row small{display:block}.warning{background:#fef3c7;border:1px solid #f59e0b;padding:9px;border-radius:8px;font-size:12px;margin:12px 0}td small{display:block;color:#64748b;margin-top:3px}`]})
 export class AppointmentsComponent implements OnInit{
  rows:any[]=[];vehicles:any[]=[];pmRows:any[]=[];requests:any[]=[];capacity:any;capacityDate='';createOpen=false;checkOpen=false;startOpen=false;saving=false;message='';checkAppointment:any=null;startAppointment:any=null;candidateRequests:any[]=[];check:any={};

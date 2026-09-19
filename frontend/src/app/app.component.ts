@@ -1,22 +1,42 @@
-import {Component,ViewEncapsulation} from '@angular/core';
+import {Component,ViewEncapsulation,HostListener} from '@angular/core';
 import {FormsModule} from '@angular/forms';
 import {Router,RouterLink,RouterLinkActive,RouterOutlet} from '@angular/router';
 
 @Component({selector:'app-root',standalone:true,imports:[FormsModule,RouterOutlet,RouterLink,RouterLinkActive],encapsulation:ViewEncapsulation.None,template:`
-<div class="shell"><aside><div class="brand"><img src="assets/audree-logo.png" alt="Audree" class="brand-logo"><strong>AUDREE</strong></div><nav>
+<div class="shell" [class.navigation-collapsed]="navigationCollapsed" [class.navigation-open]="navigationOpen"><button class="nav-backdrop" [hidden]="!navigationOpen" (click)="navigationOpen=false" aria-label="Close navigation"></button><aside id="fleet-navigation"><div class="brand"><img src="assets/audree-logo.png" alt="Audree" class="brand-logo"><strong>AUDREE</strong><button class="nav-close" (click)="navigationOpen=false" aria-label="Close navigation">×</button></div><nav aria-label="Main navigation" (click)="closeNavigation($event)">
  <span class="nav-group">Operations</span><a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{exact:true}">Dashboard</a><a routerLink="/appointments" routerLinkActive="active">Appointments & Capacity</a><a routerLink="/service" routerLinkActive="active">Service Execution</a><a routerLink="/breakdown" routerLinkActive="active">Breakdowns / RSA</a>
  <span class="nav-group">Maintenance</span><a routerLink="/maintenance-requests" routerLinkActive="active">Maintenance Requests</a><a routerLink="/work-orders" routerLinkActive="active">Work Orders</a><a routerLink="/tasks" routerLinkActive="active">Task Management</a><a routerLink="/pm" [queryParams]="{tab:'history'}" routerLinkActive="active">PM History</a>
  <span class="nav-group">Fleet</span><a routerLink="/search" routerLinkActive="active">Global Search</a><a routerLink="/vehicle" routerLinkActive="active">Vehicle 360</a><a routerLink="/pm-obligations" routerLinkActive="active">PM Obligations</a><a routerLink="/campaigns" routerLinkActive="active">Campaigns</a>
  <span class="nav-group">Configuration</span><a routerLink="/pm" [queryParams]="{tab:'masters',focus:'fleet'}" routerLinkActive="active">Fleet Masters</a><a routerLink="/pm-programs" routerLinkActive="active">PM Programs</a><a routerLink="/pm" [queryParams]="{tab:'enrollment'}" routerLinkActive="active">Vehicle Enrollment</a><a routerLink="/pm" [queryParams]="{tab:'masters',focus:'system'}" routerLinkActive="active">System Masters</a>
  <span class="nav-group">Resources</span><a routerLink="/technicians" routerLinkActive="active">Technicians</a><a routerLink="/parts" routerLinkActive="active">Parts & Inventory</a>
  <span class="nav-group">Control</span><a routerLink="/warranty" routerLinkActive="active">Warranty</a><a routerLink="/documents" routerLinkActive="active">Documents</a><a routerLink="/sla" routerLinkActive="active">SLA Clocks</a><a routerLink="/release" routerLinkActive="active">QC / Release</a><a routerLink="/availability" routerLinkActive="active">Availability / Uptime</a><a routerLink="/offhire" routerLinkActive="active">Off-Hire</a><a routerLink="/quality" routerLinkActive="active">Quality / FTF</a><a routerLink="/maintenance-analytics" routerLinkActive="active">Maintenance Analytics</a><a routerLink="/audit" routerLinkActive="active">Audit Trail</a>
- </nav><div class="version">Montra Fleet Maintenance<br>v1.8.8 · Linked Service Lifecycle</div></aside>
- <main><header><div class="product"><h1>Montra Fleet Maintenance</h1><p>Maintain Today. Move Tomorrow.</p></div><form class="header-search" (ngSubmit)="openGlobalSearch()"><input name="globalVehicle" [(ngModel)]="globalQuery" placeholder="Search vehicle no. / VIN" aria-label="Global vehicle search"><button type="submit">Search</button></form><div class="user">RK &nbsp; Ravi Kumar<br><small>Service Centre Manager</small></div></header><router-outlet /></main>
+ </nav><div class="version">Montra Fleet Maintenance<br>v1.8.9 · Fleet Workspace</div></aside>
+ <main><header class="app-header"><button class="menu-toggle" (click)="toggleNavigation()" aria-controls="fleet-navigation" [attr.aria-expanded]="navigationOpen||(!compactNavigation&&!navigationCollapsed)" aria-label="Toggle navigation">☰</button><div class="product"><h1>Montra Fleet Maintenance</h1><p>Maintain Today. Move Tomorrow.</p></div><form class="header-search" (ngSubmit)="openGlobalSearch()"><input name="globalVehicle" [(ngModel)]="globalQuery" placeholder="Search vehicle no. / VIN" aria-label="Global vehicle search"><button type="submit">Search</button></form><div class="user">RK &nbsp; Ravi Kumar<br><small>Service Centre Manager</small></div></header><router-outlet /></main>
 </div>`,styles:[`
 .shell{display:grid;grid-template-columns:255px 1fr;min-height:100vh}aside{background:#071b3a;color:#fff;padding:18px 14px;position:relative}.brand-logo{width:42px;height:42px;object-fit:contain;background:#fff;border-radius:7px;padding:2px}.brand{display:flex;gap:10px;align-items:center;font-size:22px;margin-bottom:18px}.mark{font-size:32px;font-weight:900;color:#ff6a35}nav{display:grid;gap:2px;padding-bottom:70px}nav a{padding:7px 11px;color:#dbe7fa;text-decoration:none;border-radius:7px;font-size:12.5px;cursor:pointer}nav a.active,nav a:hover{background:#123b73;color:#fff}.nav-group{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#7890b2;margin:10px 10px 3px}.version{position:absolute;bottom:12px;left:18px;font-size:11px;color:#b9c6da}main{min-width:0}header{min-height:72px;background:#fff;border-bottom:1px solid #e5e7eb;display:grid;grid-template-columns:minmax(220px,1fr) minmax(280px,520px) minmax(190px,1fr);gap:18px;align-items:center;padding:0 28px}header h1{margin:0;font-size:20px}header p{margin:4px 0 0;color:#64748b;font-size:13px}.user{text-align:right;font-size:13px}.header-search{display:grid;grid-template-columns:1fr auto}.header-search input,.header-search button{min-height:42px;padding:8px 11px;border:1px solid #cbd5e1}.header-search input{border-radius:8px 0 0 8px}.header-search button{border-radius:0 8px 8px 0;background:#1266d5;color:#fff;border-color:#1266d5;font-weight:700}app-pm > .page > .tabs,app-pm .setup-guide{display:none!important}@media(max-width:1100px){header{grid-template-columns:1fr 1.2fr}.user{display:none}}@media(max-width:900px){.shell{grid-template-columns:1fr}aside{display:none}header{padding:10px 14px;grid-template-columns:1fr}.product p{display:none}.header-search{width:100%}}
+
+/* Shared application shell */
+.shell{grid-template-columns:220px minmax(0,1fr)}
+.shell aside{position:sticky;top:0;height:100dvh;overflow-y:auto;padding:16px 12px;scrollbar-width:thin}
+.shell .brand{font-size:21px;gap:9px;margin-bottom:16px}.shell .brand-logo{width:36px;height:36px}
+.shell nav{padding-bottom:20px;gap:3px}.shell nav a{min-height:36px;display:flex;align-items:center;padding:8px 10px;line-height:1.3;font-size:12px}
+.shell .version{position:static;padding:16px 10px 8px;border-top:1px solid #25405e;font-size:10px}
+.shell .app-header{position:sticky;top:0;z-index:20;min-height:72px;grid-template-columns:38px minmax(175px,1fr) minmax(200px,430px) auto;padding:10px 22px;gap:16px}
+.shell .app-header h1{font-size:17px}.shell .app-header p{font-size:11px}
+.shell .header-search input{min-width:0;width:100%;font-size:13px}.shell .header-search button{font-size:12px}
+.menu-toggle,.nav-close{min-width:38px;min-height:38px;border:1px solid #dce4ee;background:#fff;color:#17375d;border-radius:7px;font-size:20px;cursor:pointer}
+.nav-close,.nav-backdrop{display:none}.shell.navigation-collapsed{grid-template-columns:minmax(0,1fr)}.shell.navigation-collapsed aside{display:none}
+@media(max-width:1100px){.shell{grid-template-columns:minmax(0,1fr)}.shell aside{display:none}.shell.navigation-open aside{display:block;position:fixed;left:0;top:0;width:250px;height:100dvh;z-index:50;box-shadow:8px 0 30px #071b3a33}.nav-close{display:block;margin-left:auto;background:transparent;border-color:#456080;color:white}.nav-backdrop:not([hidden]){display:block;position:fixed;inset:0;background:#071b3a66;border:0;z-index:40}.shell .app-header{grid-template-columns:38px minmax(160px,1fr) minmax(200px,1fr)}.shell .user{display:none}}
+@media(max-width:600px){.shell .app-header{grid-template-columns:38px 1fr;padding:10px 14px;gap:8px 12px}.shell .header-search{grid-column:1/-1}.shell .app-header h1{font-size:16px}.shell .app-header p{display:none}}
+
 `]})
 export class AppComponent{
- globalQuery='';
+ globalQuery='';navigationOpen=false;navigationCollapsed=false;compactNavigation=window.innerWidth<=1100;
+ @HostListener('window:resize') resize(){this.compactNavigation=window.innerWidth<=1100;if(!this.compactNavigation)this.navigationOpen=false;}
+ @HostListener('window:keydown.escape') closeDrawer(){this.navigationOpen=false;}
+ toggleNavigation(){if(this.compactNavigation)this.navigationOpen=!this.navigationOpen;else this.navigationCollapsed=!this.navigationCollapsed;}
+ closeNavigation(event:MouseEvent){if((event.target as HTMLElement).closest('a'))this.navigationOpen=false;}
+
  constructor(private router:Router){}
  openGlobalSearch(){const q=this.globalQuery.trim();this.router.navigate(['/search'],{queryParams:q?{q}:undefined})}
 }

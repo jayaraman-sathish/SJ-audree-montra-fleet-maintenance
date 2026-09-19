@@ -25,7 +25,7 @@ import { Subscription } from 'rxjs';
     </section>
     <p *ngIf="!x.jobs?.length">No Job Card has been created for this service visit.</p>
     <section class="job" *ngFor="let job of x.jobs">
-     <div class="job-head"><div><span class="muted">Linked Job Card</span><h3>{{job.number}}</h3><p class="stage">{{job.stage}}</p></div><button (click)="open(job)">Open Workspace</button></div>
+     <div class="job-head"><div><span class="muted">Linked Job Card</span><h3>{{job.number}}</h3><p class="stage">{{job.stage}}</p></div><div class="record-action"><span>Action</span><button (click)="open(job)">Open Workspace</button></div></div>
      <div class="metrics">
       <div><span>Assigned To (Supervisor)</span><strong>{{job.assignedSupervisor||'Unassigned'}}</strong></div><div><span>Supervisor Assigned On</span><app-fleet-date [value]="job.supervisorAssignedAt"></app-fleet-date></div><div><span>Internal technician</span><strong>{{job.engineer}}</strong><small *ngIf="job.taskEngineers?.length">Task engineers: {{job.taskEngineers.join(', ')}}</small></div>
       <div><span>Bay</span><strong>{{job.bay}}</strong></div>

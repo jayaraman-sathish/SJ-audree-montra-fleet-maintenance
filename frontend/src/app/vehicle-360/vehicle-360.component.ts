@@ -1,6 +1,7 @@
+import {FleetGridDirective} from '../shared/fleet-grid.directive';
 import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
-@Component({selector:'app-vehicle-360',standalone:true,imports:[CommonModule],templateUrl:'./vehicle-360.component.html',styleUrl:'./vehicle-360.component.css'})
+@Component({selector:'app-vehicle-360',standalone:true,imports:[FleetGridDirective,CommonModule],templateUrl:'./vehicle-360.component.html',styleUrl:'./vehicle-360.component.css'})
 export class Vehicle360Component {
  activeTab='Overview';
  tabs=['Overview','Components','PM Obligations','Service History','Defects','Documents','Telematics','Warranty & Entitlements','Campaigns','Uptime History'];
