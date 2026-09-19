@@ -14,7 +14,7 @@ describe('Veerai reasoning panel (UI fixtures are not live AI)',()=>{
   cy.visit(`/service-workspace/${id}`);cy.contains('button','Veerai · Analyse this job').click();
   cy.get('app-veerai input[type=password]').type('fixture-pilot-access');cy.get('app-veerai .analyse').click();cy.wait('@analyse');
   cy.contains('Possible causes — not confirmed').should('be.visible');cy.contains('Fixture hypothesis').should('be.visible');
-  cy.get('app-veerai script').should('not.exist');cy.contains('button','View evidence sources').click();cy.contains('Test evidence only').should('be.visible');
+  cy.get('app-veerai script').should('not.exist');cy.contains('button','View evidence sources').click();cy.contains('Test evidence only').scrollIntoView().should('be.visible');
   cy.get('button[aria-label="Close Veerai"]').click();cy.contains('button','Veerai · Analyse this job').click();cy.get('app-veerai input[type=password]').should('have.value','');
  });
  it('shows a provider error without claiming an analysis',()=>{
