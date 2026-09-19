@@ -1638,22 +1638,29 @@ app.MapPost("/api/work-orders/{jobCardId:guid}/diagnosis/fallback", async (Guid 
     return Results.Ok(new{message="General diagnostic checklist generated.",workItemId=created?.Id});
 });
 
-app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbContext db) =>
+app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, StartAssignedServiceRequest r, AppDbContext db) =>
 {
+    if(string.IsNullOrWhiteSpace(r.AssignedSupervisor))return Results.BadRequest(new{message="Enter the assigned supervisor."});
+    await using var transaction=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
     var a=await db.Appointments.FindAsync(id); if(a is null)return Results.NotFound();
     var v=await db.Vehicles.FindAsync(a.VehicleId); if(v is null)return Results.BadRequest();
     if(a.Status=="In Progress")return Results.Conflict(new{message="Appointment already started."});
     if(a.Status=="Cancelled"||a.Status=="No-show"||a.Status=="Completed")return Results.Conflict(new{message=$"Cannot start a {a.Status} appointment."});
 
+    if(r.OdometerKm.HasValue)v.OdometerKm=r.OdometerKm.Value;
+    if(r.OperatingHours.HasValue)v.OperatingHours=r.OperatingHours.Value;
+    if(r.EnergyKwh.HasValue)v.EnergyKwh=r.EnergyKwh.Value;
+    if(v.OdometerKm<0||v.OperatingHours<0||v.EnergyKwh<0)return Results.BadRequest(new{message="Arrival readings must not be negative."});
     var e=new ServiceEvent{VehicleId=v.Id,PmObligationId=a.PmObligationId,EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}",
-        EventType=a.AppointmentType,Priority=a.Priority,Status="In Progress"};
+        EventType=a.AppointmentType,Priority=a.Priority,Status="Assigned",AssignedSupervisor=r.AssignedSupervisor.Trim(),SupervisorAssignedAt=DateTime.UtcNow};
     var jc=new JobCard{ServiceEventId=e.Id,JobCardNumber=$"JC-{DateTime.UtcNow:yyyy}-{(await db.JobCards.CountAsync()+1):D6}",
-        Status="In Progress",Bay=a.Bay,TechnicianId=a.TechnicianId,Technician=a.Technician,StartedAt=DateTime.UtcNow};
+        Status="Assigned",Bay=a.Bay,TechnicianId=a.TechnicianId,Technician=a.Technician,StartedAt=DateTime.UtcNow};
     a.Status="In Progress"; v.Status="Under Maintenance"; db.ServiceEvents.Add(e); db.JobCards.Add(jc);
     if(a.PmObligationId.HasValue)
     {
         var po=await db.PmObligations.FindAsync(a.PmObligationId.Value);
-        if(po?.MaintenancePlanId is Guid planId)
+        if(po==null||po.VehicleId!=v.Id||po.Status=="Completed")return Results.Conflict(new{message="The PM obligation is unavailable for this vehicle."});
+        if(po.MaintenancePlanId is Guid planId)
         {
             var matrix=await(from m in db.MaintenancePlanMatrixItems where m.MaintenancePlanId==planId
                 join t in db.MaintenanceTaskDefinitions on m.MaintenanceTaskDefinitionId equals t.Id where t.IsActive orderby m.Sequence,t.SortOrder select new{m,t}).ToListAsync();
@@ -1685,15 +1692,24 @@ app.MapPost("/api/appointments/{id:guid}/start-service", async (Guid id, AppDbCo
             }
         }
     }
-    var linkedRequests=await db.MaintenanceRequests.Where(x=>x.VehicleId==v.Id && x.Status!="Cancelled" && x.Status!="Converted" &&
-        ((a.SourceType=="Maintenance Request" && x.Id.ToString()==a.SourceReference) || (a.PmObligationId.HasValue && (x.Status=="Open"||x.Status=="Vehicle Arrived")))).OrderBy(x=>x.RequestedAt).ToListAsync();
+    if((a.PmObligationId.HasValue||a.AppointmentType=="PM")&&!db.WorkItems.Local.Any(x=>x.JobCardId==jc.Id))return Results.Conflict(new{message="Configure executable PM tasks before starting this appointment."});
+    var requested=r.RequestIds??Array.Empty<Guid>();
+    var linkedRequests=await db.MaintenanceRequests.Where(x=>x.VehicleId==v.Id&&x.JobCardId==null&&x.Status!="Cancelled"&&
+      (requested.Contains(x.Id)||(a.SourceType=="Maintenance Request"&&x.Id.ToString()==a.SourceReference))).ToListAsync();
+    if(requested.Except(linkedRequests.Select(x=>x.Id)).Any())return Results.Conflict(new{message="A selected request is unavailable or belongs to another vehicle."});
+    if(!string.IsNullOrWhiteSpace(r.Complaint)) {
+        var arrival=new MaintenanceRequest{VehicleId=v.Id,RequestNumber=$"MR-{Guid.NewGuid():N}",Description=r.Complaint,ComplaintCategoryCode="GENERAL",DiagnosticTemplateCode="DIAG-GENERAL",SourceType="Check-In",SourceReference=a.Id.ToString(),Priority=a.Priority};
+        db.MaintenanceRequests.Add(arrival);linkedRequests.Add(arrival);
+    }
     foreach(var mr in linkedRequests) await AddDiagnosticWorkAsync(db,jc,mr,a.Priority);
 
+    if(!db.WorkItems.Local.Any(x=>x.JobCardId==jc.Id))return Results.Conflict(new{message="No executable work is configured. Configure the PM tasks or select a maintenance request."});
+    db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=jc.Id,EntryType="Supervisor Assigned",Comment=$"Assigned to {e.AssignedSupervisor}. Arrival: {r.Remarks}",CreatedBy="Service Advisor"});
     db.VehicleAvailabilityLedger.Add(new VehicleAvailabilityLedger{VehicleId=v.Id,State="Under Maintenance",StartAt=DateTime.UtcNow,
         ReasonCode=a.AppointmentType,SourceType="ServiceEvent",SourceServiceEventId=e.Id});
     if(a.PmObligationId.HasValue){var p=await db.PmObligations.FindAsync(a.PmObligationId.Value);if(p!=null)p.Status="In Service";}
     Audit(db,"START","ServiceEvent",e.Id,$"{v.RegistrationNumber} via {a.AppointmentNumber}");
-    await db.SaveChangesAsync(); return Results.Ok(new{serviceEvent=e,jobCard=jc});
+    await db.SaveChangesAsync(); await transaction.CommitAsync(); return Results.Ok(new{serviceEvent=e,jobCard=jc});
 });
 
 app.MapGet("/api/service-events/active", async (AppDbContext db) =>
@@ -2265,7 +2281,7 @@ app.MapPost("/api/service-events/{id:guid}/release", async (Guid id, ReleaseRequ
     var openLedger=await db.VehicleAvailabilityLedger.Where(x=>x.VehicleId==v.Id && x.EndAt==null).OrderByDescending(x=>x.StartAt).FirstOrDefaultAsync();
     if(openLedger!=null) openLedger.EndAt=DateTime.UtcNow;
     db.VehicleAvailabilityLedger.Add(new VehicleAvailabilityLedger { VehicleId=v.Id, State="Available", StartAt=DateTime.UtcNow, ReasonCode="Released", SourceType="ServiceEvent", SourceServiceEventId=e.Id });
-    db.VehicleReleases.Add(rel); Audit(db,"RELEASE","Vehicle",v.Id,e.EventNumber,r.ReleasedBy);
+    db.VehicleReleases.Add(rel); Audit(db,"RELEASE","ServiceEvent",e.Id,e.EventNumber,r.ReleasedBy);
     if(e.PmObligationId.HasValue)
     {
         var po=await db.PmObligations.FindAsync(e.PmObligationId.Value);
@@ -2274,6 +2290,22 @@ app.MapPost("/api/service-events/{id:guid}/release", async (Guid id, ReleaseRequ
     if(e.BreakdownId.HasValue) { var breakdown=await db.Breakdowns.FindAsync(e.BreakdownId.Value); if(breakdown != null) { breakdown.Status="Restored"; breakdown.RestoredAt=DateTime.UtcNow; } }
     await db.SaveChangesAsync(); await transaction.CommitAsync(); return Results.Ok(rel);
 });
+
+app.MapGet("/api/job-cards/{id:guid}/history", async(Guid id, AppDbContext db)=>
+{
+    var job=await db.JobCards.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==id);if(job==null)return Results.NotFound();
+    var visit=await db.ServiceEvents.AsNoTracking().SingleAsync(x=>x.Id==job.ServiceEventId);
+    var ids=new List<Guid>{id,visit.Id};if(visit.BreakdownId.HasValue)ids.Add(visit.BreakdownId.Value);
+    ids.AddRange(await db.WorkItems.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
+    ids.AddRange(await db.MaintenanceRequests.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
+    ids.AddRange(await db.Defects.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
+    ids.AddRange(await db.PartRequests.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
+    ids.AddRange(await db.QcInspections.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
+    var instances=await db.WorkTemplateInstances.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync();
+    ids.AddRange(await db.WorkTemplateFieldInstances.Where(x=>instances.Contains(x.WorkTemplateInstanceId)).Select(x=>x.Id).ToListAsync());
+    return Results.Ok(await db.AuditEvents.AsNoTracking().Where(x=>x.EntityId.HasValue&&ids.Contains(x.EntityId.Value)).OrderByDescending(x=>x.OccurredAt).ToListAsync());
+});
+app.MapGet("/api/job-cards/{id:guid}/qc",async(Guid id,AppDbContext db)=>Results.Ok(await db.QcInspections.AsNoTracking().Where(x=>x.JobCardId==id).OrderByDescending(x=>x.InspectedAt).FirstOrDefaultAsync()));
 
 app.MapGet("/api/audit", async (AppDbContext db) => Results.Ok(await db.AuditEvents.AsNoTracking().OrderByDescending(x=>x.OccurredAt).Take(250).ToListAsync()));
 
@@ -2486,6 +2518,7 @@ app.MapGet("/api/maintenance-requests", async (string? status, Guid? vehicleId, 
 });
 app.MapPost("/api/maintenance-requests", async (MaintenanceRequestCreate r, AppDbContext db) =>
 {
+    await using var transaction=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
     if(!await db.Vehicles.AnyAsync(x=>x.Id==r.VehicleId))return Results.BadRequest(new{message="Vehicle not found."});
     var category=(r.ComplaintCategoryCode??"GENERAL").Trim().ToUpperInvariant();
     var mapping=await db.MasterOptions.AsNoTracking().FirstOrDefaultAsync(x=>x.Category=="COMPLAINT_CATEGORY"&&x.Code==category&&x.IsActive);
@@ -2494,22 +2527,34 @@ app.MapPost("/api/maintenance-requests", async (MaintenanceRequestCreate r, AppD
         SourceType=r.SourceType,SourceReference=r.SourceReference,RequestType=r.RequestType,ComplaintCategoryCode=category,
         SymptomCode=string.IsNullOrWhiteSpace(r.SymptomCode)?"OTHER":r.SymptomCode.Trim().ToUpperInvariant(),DiagnosticTemplateCode=templateCode,
         Priority=r.Priority,Description=r.Description,Status="Open",RequestedBy=r.RequestedBy,RequestedAt=DateTime.UtcNow,TargetDate=r.TargetDate};
-    db.MaintenanceRequests.Add(mr);Audit(db,"CREATE","MaintenanceRequest",mr.Id,$"{mr.RequestNumber}:{mr.Description}",r.RequestedBy);await db.SaveChangesAsync();return Results.Created($"/api/maintenance-requests/{mr.Id}",mr);
+    db.MaintenanceRequests.Add(mr);
+    if(!string.IsNullOrWhiteSpace(r.AssignedSupervisor)) {
+        var visit=new ServiceEvent{VehicleId=r.VehicleId,EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}",EventType="Maintenance",Priority=r.Priority,AssignedSupervisor=r.AssignedSupervisor.Trim(),SupervisorAssignedAt=DateTime.UtcNow};
+        var job=new JobCard{ServiceEventId=visit.Id,JobCardNumber=$"JC-{DateTime.UtcNow:yyyy}-{(await db.JobCards.CountAsync()+1):D6}"};
+        db.ServiceEvents.Add(visit);db.JobCards.Add(job);await AddDiagnosticWorkAsync(db,job,mr,r.Priority);
+        var vehicle=await db.Vehicles.FindAsync(r.VehicleId);vehicle!.Status="Under Maintenance";
+        db.VehicleAvailabilityLedger.Add(new VehicleAvailabilityLedger{VehicleId=r.VehicleId,State="Under Maintenance",SourceType="ServiceEvent",SourceServiceEventId=visit.Id,ReasonCode="Maintenance"});
+        db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=job.Id,EntryType="Supervisor Assigned",Comment=$"Assigned to {visit.AssignedSupervisor}",CreatedBy=r.RequestedBy});
+    }
+    Audit(db,"CREATE","MaintenanceRequest",mr.Id,$"{mr.RequestNumber}:{mr.Description}",r.RequestedBy);await db.SaveChangesAsync();await transaction.CommitAsync();return Results.Created($"/api/maintenance-requests/{mr.Id}",mr);
 });
 app.MapPut("/api/maintenance-requests/{id:guid}/status", async (Guid id,StatusRequest r,AppDbContext db)=>{var x=await db.MaintenanceRequests.FindAsync(id);if(x is null)return Results.NotFound();x.Status=r.Status;Audit(db,"STATUS","MaintenanceRequest",x.Id,r.Status);await db.SaveChangesAsync();return Results.Ok(x);});
 
 app.MapPost("/api/work-orders/from-requests", async (CreateWorkOrderRequest r,AppDbContext db)=>
 {
+    await using var transaction=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
     if(r.RequestIds is null||r.RequestIds.Length==0)return Results.BadRequest(new{message="Select at least one maintenance request."});
     var reqs=await db.MaintenanceRequests.Where(x=>r.RequestIds.Contains(x.Id)).ToListAsync();
     if(reqs.Count!=r.RequestIds.Length)return Results.BadRequest(new{message="One or more requests were not found."});
-    if(reqs.Any(x=>x.JobCardId!=null))return Results.Conflict(new{message="One or more requests are already linked to a work order."});
+    if(reqs.Any(x=>x.JobCardId!=null||x.Status=="Cancelled"))return Results.Conflict(new{message="One or more requests are already linked to a work order."});
     var vehicleId=reqs[0].VehicleId;if(reqs.Any(x=>x.VehicleId!=vehicleId))return Results.BadRequest(new{message="All requests grouped into a work order must belong to the same vehicle."});
     var vehicle=await db.Vehicles.FindAsync(vehicleId);if(vehicle is null)return Results.BadRequest();
-    var e=new ServiceEvent{VehicleId=vehicleId,EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}",EventType="Maintenance",Priority=r.Priority,Status="Open"};
+    var e=new ServiceEvent{VehicleId=vehicleId,EventNumber=$"SE-{DateTime.UtcNow:yyyy}-{(await db.ServiceEvents.CountAsync()+1):D6}",EventType="Maintenance",Priority=r.Priority,Status="Open",AssignedSupervisor=r.AssignedSupervisor?.Trim()??"",SupervisorAssignedAt=string.IsNullOrWhiteSpace(r.AssignedSupervisor)?null:DateTime.UtcNow};
     var j=new JobCard{ServiceEventId=e.Id,JobCardNumber=$"WO-{DateTime.UtcNow:yyyy}-{(await db.JobCards.CountAsync()+1):D6}",Status="Open",Bay=r.Bay,TechnicianId=r.TechnicianId,Technician=r.Technician,StartedAt=null};
-    db.ServiceEvents.Add(e);db.JobCards.Add(j);foreach(var x in reqs){x.JobCardId=j.Id;x.Status="Converted";}
-    Audit(db,"CREATE","WorkOrder",j.Id,$"{j.JobCardNumber} from {reqs.Count} request(s)",r.CreatedBy);await db.SaveChangesAsync();return Results.Ok(new{workOrder=j,serviceEvent=e});
+    db.ServiceEvents.Add(e);db.JobCards.Add(j);foreach(var x in reqs)await AddDiagnosticWorkAsync(db,j,x,r.Priority);vehicle.Status="Under Maintenance";
+    db.VehicleAvailabilityLedger.Add(new VehicleAvailabilityLedger{VehicleId=vehicleId,State="Under Maintenance",StartAt=DateTime.UtcNow,ReasonCode="Maintenance",SourceType="ServiceEvent",SourceServiceEventId=e.Id});
+    if(!string.IsNullOrWhiteSpace(e.AssignedSupervisor))db.WorkLogEntries.Add(new WorkLogEntry{JobCardId=j.Id,EntryType="Supervisor Assigned",Comment=$"Assigned to {e.AssignedSupervisor}",CreatedBy=r.CreatedBy});
+    Audit(db,"CREATE","WorkOrder",j.Id,$"{j.JobCardNumber} from {reqs.Count} request(s)",r.CreatedBy);await db.SaveChangesAsync();await transaction.CommitAsync();return Results.Ok(new{workOrder=j,serviceEvent=e});
 });
 
 app.MapGet("/api/work-orders", async (AppDbContext db)=>
@@ -2647,9 +2692,11 @@ record PartRequestCreate(Guid JobCardId,Guid? WorkItemId,Guid PartMasterId,Guid 
 record QuantityAction(decimal Quantity,string User);
 
 
-record MaintenanceRequestCreate(Guid VehicleId,string SourceType,string SourceReference,string RequestType,string ComplaintCategoryCode,string SymptomCode,string Priority,string Description,string RequestedBy,DateTime? TargetDate);
-record CreateWorkOrderRequest(Guid[] RequestIds,string Priority,string Bay,Guid? TechnicianId,string Technician,string CreatedBy);
+record MaintenanceRequestCreate(Guid VehicleId,string SourceType,string SourceReference,string RequestType,string ComplaintCategoryCode,string SymptomCode,string Priority,string Description,string RequestedBy,DateTime? TargetDate,string? AssignedSupervisor = null);
+record CreateWorkOrderRequest(Guid[] RequestIds,string Priority,string Bay,Guid? TechnicianId,string Technician,string CreatedBy,string? AssignedSupervisor = null);
 record ServiceTaskMasterCreate(string TaskCode,string Name,string Category,string Description,decimal StandardHours,string RequiredSkillCode,bool RequiresHvAuthorization,bool RequiresQc,string ChecklistCode);
 record StandardPartCreate(Guid PartMasterId,decimal Quantity);
 record TaskFromMasterRequest(Guid? TechnicianId,string Priority);
 record WorkOrderCostCreate(Guid? WorkItemId,string CostType,string Description,decimal Amount,string VendorReference,string PostedBy);
+
+record StartAssignedServiceRequest(string? AssignedSupervisor,Guid[]? RequestIds,decimal? OdometerKm,decimal? OperatingHours,decimal? EnergyKwh,string? Complaint,string? Remarks);

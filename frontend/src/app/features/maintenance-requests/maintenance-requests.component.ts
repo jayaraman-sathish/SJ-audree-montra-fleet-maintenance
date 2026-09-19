@@ -1,3 +1,4 @@
+import {Router} from '@angular/router';
 import {FleetGridDirective} from '../../shared/fleet-grid.directive';
 import { FleetDateComponent } from '../../shared/fleet-date.component';
 import {Component,OnInit} from '@angular/core';
@@ -10,7 +11,7 @@ import {HttpClient} from '@angular/common/http';
 <div class="title"><div><h2>Maintenance Requests</h2><p>Unplanned or manually reported service needs. Planned preventive maintenance is generated under PM Obligations.</p></div><button class="btn btn-primary" (click)="open()">+ Maintenance Request</button></div>
 <div class="note"><b>Request = why service is needed.</b> Complaint category selects the diagnostic checklist. Appointment = when/where. Check-In = vehicle arrived. Work Order = workshop execution.</div>
 
-<div class="modal-backdrop" *ngIf="show||planOpen"></div>
+<div class="modal-backdrop" *ngIf="show||planOpen||assignOpen"></div>
 <div class="modal-card" *ngIf="show"><div class="modal-head"><div><h3>Create Maintenance Request</h3><p>Classify the complaint so the correct diagnostic checklist is generated automatically.</p></div><button class="icon-btn" (click)="show=false">×</button></div>
 <div class="fields">
 <label>Vehicle<select [(ngModel)]="f.vehicleId"><option *ngFor="let v of vehicles" [value]="v.id">{{v.registrationNumber}} · {{v.model}}</option></select></label>
@@ -20,11 +21,12 @@ import {HttpClient} from '@angular/common/http';
 <label>Complaint Category<select [(ngModel)]="f.complaintCategoryCode"><option *ngFor="let x of categories" [value]="x.code">{{x.name}}</option></select><small>{{selectedCategory()?.description}}</small></label>
 <label>Symptom<select [(ngModel)]="f.symptomCode"><option *ngFor="let x of symptoms" [value]="x.code">{{x.name}}</option></select></label>
 <label class="wide">Complaint / Description<textarea [(ngModel)]="f.description" placeholder="Example: oil leak observed below vehicle after parking"></textarea></label>
-<label>Target Date<input type="date" [(ngModel)]="target"></label>
+<label>Service timing<select [(ngModel)]="immediate"><option [ngValue]="true">Vehicle here — create & assign now</option><option [ngValue]="false">Report only — schedule later</option></select></label><label *ngIf="immediate">Assigned supervisor<input [(ngModel)]="assignedSupervisor"></label><label>Target Date<input type="date" [(ngModel)]="target"></label>
 <label>Diagnostic Template<input [value]="selectedCategory()?.templateCode||'DIAG-GENERAL'" disabled></label>
 </div>
-<div class="actions"><button class="btn btn-outline" (click)="show=false">Cancel</button><button class="btn btn-primary" (click)="save()">Save Request</button></div><div class="error">{{message}}</div></div>
+<div class="actions"><button class="btn btn-outline" (click)="show=false">Cancel</button><button class="btn btn-primary" [disabled]="saving" (click)="save()">{{saving?'Saving…':immediate?'Create & Assign':'Save Request'}}</button></div><div class="error">{{message}}</div></div>
 
+<div class="modal-card" *ngIf="assignOpen"><h3>Create & Assign Service</h3><p>{{selected?.requestNumber}} · {{selected?.description}}</p><label>Assigned supervisor<input [(ngModel)]="assignedSupervisor"></label><div class="actions"><button class="btn" [disabled]="saving" (click)="assignOpen=false">Cancel</button><button class="btn btn-primary" [disabled]="saving||!assignedSupervisor.trim()" (click)="createExisting()">Create & Assign</button></div><p role="alert">{{message}}</p></div>
 <div class="modal-card checkin" *ngIf="planOpen"><div class="modal-head"><div><h3>{{checkInNow?'Check In Vehicle':'Schedule Appointment'}}</h3><p>{{selected?.requestNumber}} · {{selected?.vehicle}} · {{selected?.description}}</p></div><button class="icon-btn" (click)="closePlan()">×</button></div>
 <div class="fields">
 <label *ngIf="!checkInNow">Date / Time<input type="datetime-local" [(ngModel)]="appointment.startAt" (change)="loadCapacity()"></label>
@@ -46,26 +48,30 @@ import {HttpClient} from '@angular/common/http';
 <div class="actions"><button class="btn btn-outline" (click)="closePlan()">Cancel</button><button class="btn btn-primary" [disabled]="saving" (click)="saveAppointment()">{{saving?'Saving...':(checkInNow?'Create & Check In':'Schedule Appointment')}}</button></div><div class="error">{{message}}</div></div>
 
 <div class="card"><div class="fleet-grid-scroll" role="region" aria-label="Records" tabindex="0"><table fleetGrid><tr><th>Request</th><th>Requested On</th><th>Target Date</th><th>Vehicle</th><th>Source</th><th>Type</th><th>Complaint</th><th>Priority</th><th>Description</th><th>Status</th><th>Action</th></tr>
-<tr *ngFor="let x of rows"><td>{{x.requestNumber}}</td><td class="date-cell"><app-fleet-date [value]="x.requestedAt"></app-fleet-date></td><td class="date-cell"><app-fleet-date [value]="x.targetDate" [dateOnly]="true"></app-fleet-date></td><td>{{x.vehicle}}</td><td>{{x.sourceType}}</td><td>{{x.requestType}}</td><td><b>{{categoryName(x.complaintCategoryCode)}}</b><small>{{symptomName(x.symptomCode)}} · {{x.diagnosticTemplateCode}}</small></td><td>{{x.priority}}</td><td>{{x.description}}</td><td>{{x.status}}</td><td class="act"><button *ngIf="x.status==='Open'" class="btn btn-primary" (click)="schedule(x,false)">Schedule Appointment</button><button *ngIf="x.status==='Open'" class="btn btn-outline" (click)="schedule(x,true)">Check In Now</button><button *ngIf="x.status==='Open'" class="btn btn-outline" (click)="setStatus(x,'Cancelled')">Cancel</button><span *ngIf="x.status!=='Open'">{{x.status}}</span></td></tr>
+<tr *ngFor="let x of rows"><td>{{x.requestNumber}}</td><td class="date-cell"><app-fleet-date [value]="x.requestedAt"></app-fleet-date></td><td class="date-cell"><app-fleet-date [value]="x.targetDate" [dateOnly]="true"></app-fleet-date></td><td>{{x.vehicle}}</td><td>{{x.sourceType}}</td><td>{{x.requestType}}</td><td><b>{{categoryName(x.complaintCategoryCode)}}</b><small>{{symptomName(x.symptomCode)}} · {{x.diagnosticTemplateCode}}</small></td><td>{{x.priority}}</td><td>{{x.description}}</td><td>{{x.status}}</td><td class="act"><button *ngIf="x.status==='Open'" class="btn btn-primary" (click)="schedule(x,false)">Schedule Appointment</button><button *ngIf="x.status==='Open'" class="btn btn-outline" (click)="assignExisting(x)">Create & Assign</button><button *ngIf="x.status==='Open'" class="btn btn-outline" (click)="setStatus(x,'Cancelled')">Cancel</button><span *ngIf="x.status!=='Open'">{{x.status}}</span></td></tr>
 <tr *ngIf="!rows.length"><td colspan="11" class="empty">No maintenance requests.</td></tr></table></div></div>
 </section>`,styles:[`.page{padding:26px}.title{display:flex;justify-content:space-between;align-items:center}.title p{color:#64748b}.note{background:#eef6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin:12px 0}.card{margin-top:14px}.modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.35);z-index:1000}.modal-card{position:fixed;z-index:1001;left:50%;top:50%;transform:translate(-50%,-50%);width:min(860px,94vw);max-height:88vh;overflow:auto;background:#fff;border-radius:12px;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.2)}.modal-card.checkin{width:min(900px,94vw)}.modal-head{display:flex;justify-content:space-between}.modal-head h3{margin:0}.modal-head p{margin:4px 0;color:#64748b}.icon-btn{border:0;background:transparent;font-size:28px}.fields{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:16px 0}.wide{grid-column:1/-1}label{font-size:12px}label small,td small{display:block;color:#64748b;margin-top:4px}input,select,textarea{display:block;width:100%;box-sizing:border-box;padding:9px;margin-top:4px;border:1px solid #cbd5e1;border-radius:6px}textarea{min-height:60px}.actions{display:flex;justify-content:flex-end;gap:8px}.error{color:#b91c1c}.empty{text-align:center;color:#64748b;padding:18px}.act{display:flex;gap:5px;flex-wrap:wrap}.btn{white-space:nowrap}.template-note{background:#f8fafc;border:1px solid #e2e8f0;padding:10px;border-radius:8px;font-size:12px;margin-bottom:12px}@media(max-width:800px){.fields{grid-template-columns:1fr}.wide{grid-column:auto}}`]})
 export class MaintenanceRequestsComponent implements OnInit{
+ assignOpen=false;immediate=true;assignedSupervisor='';
  rows:any[]=[];vehicles:any[]=[];categories:any[]=[];symptoms:any[]=[];centres:any[]=[];show=false;planOpen=false;message='';target='';selected:any=null;checkInNow=false;saving=false;capacity:any;
  f:any={vehicleId:'',sourceType:'Manual',sourceReference:'',requestType:'Repair',complaintCategoryCode:'GENERAL',symptomCode:'OTHER',priority:'P3',description:'',requestedBy:'Fleet User',targetDate:null};
  appointment:any={startAt:'',serviceCentre:'',bay:'',plannedHours:2,reason:''};
  checkin:any={odometerKm:null,operatingHours:null,energyKwh:null,additionalComplaint:'',arrivalRemarks:''};
- constructor(private h:HttpClient){}
+ constructor(private h:HttpClient,private router:Router){}
  ngOnInit(){
   this.h.get<any[]>('/api/vehicles').subscribe(x=>{this.vehicles=x;if(x.length)this.f.vehicleId=x[0].id});
   this.h.get<any>('/api/maintenance-requests/config').subscribe(x=>{this.categories=x.categories||[];this.symptoms=x.symptoms||[];this.centres=x.centres||[]});
   this.load()
  }
  load(){this.h.get<any[]>('/api/maintenance-requests').subscribe(x=>this.rows=x)}
- open(){this.message='';this.f={vehicleId:this.vehicles[0]?.id||'',sourceType:'Manual',sourceReference:'',requestType:'Repair',complaintCategoryCode:'GENERAL',symptomCode:'OTHER',priority:'P3',description:'',requestedBy:'Fleet User',targetDate:null};this.target='';this.show=true}
+ open(){this.assignedSupervisor='';this.immediate=true;this.message='';this.f={vehicleId:this.vehicles[0]?.id||'',sourceType:'Manual',sourceReference:'',requestType:'Repair',complaintCategoryCode:'GENERAL',symptomCode:'OTHER',priority:'P3',description:'',requestedBy:'Fleet User',targetDate:null};this.target='';this.show=true}
  selectedCategory(){return this.categories.find(x=>x.code===this.f.complaintCategoryCode)}
  categoryName(code:string){return this.categories.find(x=>x.code===code)?.name||code||'General'}
  symptomName(code:string){return this.symptoms.find(x=>x.code===code)?.name||code||'Other'}
- save(){if(!this.f.vehicleId||!this.f.description){this.message='Vehicle and description are required.';return}this.f.targetDate=this.target?new Date(this.target).toISOString():null;this.h.post('/api/maintenance-requests',this.f).subscribe({next:()=>{this.show=false;this.load()},error:e=>this.message=e.error?.message||'Unable to save'})}
+ save(){if(this.saving)return;if(!this.f.vehicleId||!this.f.description.trim()||(this.immediate&&!this.assignedSupervisor.trim())){this.message='Enter the vehicle, complaint and supervisor for immediate service.';return}this.saving=true;this.f.targetDate=this.target?new Date(this.target).toISOString():null;this.h.post<any>('/api/maintenance-requests',{...this.f,assignedSupervisor:this.immediate?this.assignedSupervisor.trim():null}).subscribe({next:r=>{this.saving=false;this.show=false;if(r.jobCardId)this.router.navigate(['/service-workspace',r.jobCardId]);else this.load()},error:e=>{this.saving=false;this.message=e.error?.message||'Unable to save request'}})}
+ assignExisting(x:any){this.selected=x;this.assignedSupervisor='';this.assignOpen=true;this.message=''}
+ createExisting(){if(this.saving||!this.assignedSupervisor.trim())return;this.saving=true;this.h.post<any>('/api/work-orders/from-requests',{requestIds:[this.selected.id],priority:this.selected.priority,bay:'',technicianId:null,technician:'',createdBy:'Service Advisor',assignedSupervisor:this.assignedSupervisor.trim()}).subscribe({next:r=>{this.saving=false;this.router.navigate(['/service-workspace',r.workOrder.id])},error:e=>{this.saving=false;this.message=e.error?.message||'Unable to create service'}})}
+
  vehicle(id:string){return this.vehicles.find(v=>v.id===id)}
  schedule(x:any,now:boolean){
   this.selected=x;this.checkInNow=now;const v=this.vehicle(x.vehicleId);const defaultCentre=v?.serviceCentreCode||'';
