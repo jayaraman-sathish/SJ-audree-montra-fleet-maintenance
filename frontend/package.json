@@ -1,6 +1,6 @@
 {
   "name": "montra-fleet-web",
-  "version": "1.8.15",
+  "version": "1.8.16",
   "scripts": {
     "start": "ng serve",
     "build": "ng build"

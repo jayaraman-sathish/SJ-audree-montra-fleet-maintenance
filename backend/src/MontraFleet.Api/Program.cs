@@ -46,6 +46,15 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.EnsureCreatedAsync();
     await db.Database.ExecuteSqlRawAsync("""
+      ALTER TABLE "ServiceEvents" ADD COLUMN IF NOT EXISTS "OpenedOdometerKm" numeric NULL;
+      ALTER TABLE "SlaClocks" ADD COLUMN IF NOT EXISTS "StoppedAt" timestamptz NULL;
+      ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "JobCardId" uuid NULL;
+      ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "ExpiresAt" timestamptz NULL;
+      ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "Content" bytea NOT NULL DEFAULT ''::bytea;
+      ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "ContentType" text NOT NULL DEFAULT 'application/octet-stream';
+      CREATE TABLE IF NOT EXISTS "WarrantyClaims" ("Id" uuid PRIMARY KEY,"WarrantyEntitlementId" uuid NOT NULL,"JobCardId" uuid NOT NULL,"PartRequestId" uuid NULL,"ClaimNumber" text NOT NULL,"Description" text NOT NULL,"Amount" numeric NOT NULL,"Status" text NOT NULL,"CreatedBy" text NOT NULL,"CreatedAt" timestamptz NOT NULL,"DecisionBy" text NOT NULL,"DecisionRemarks" text NOT NULL,"DecidedAt" timestamptz NULL);
+    """);
+    await db.Database.ExecuteSqlRawAsync("""
         ALTER TABLE IF EXISTS "ServiceEvents" ADD COLUMN IF NOT EXISTS "AssignedSupervisor" text NOT NULL DEFAULT '';
         ALTER TABLE IF EXISTS "ServiceEvents" ADD COLUMN IF NOT EXISTS "SupervisorAssignedAt" timestamptz NULL;
         CREATE TABLE IF NOT EXISTS "MasterOptions" (
@@ -706,6 +715,7 @@ using (var scope = app.Services.CreateScope())
     await DemoVehicleSeedV179.SeedAsync(db);
     await ResourceMasterSeedV1814.SeedAsync(db);
     await db.ReconcileVisitStatusesAsync();
+    await db.ReconcileControlsAsync();
 
 
     async Task<ServiceCentreMaster> EnsureCentre(string code,string name,string address,string city,string state,string postal,string mobile,string email)
@@ -887,18 +897,18 @@ app.MapGet("/api/dashboard/summary", async (AppDbContext db) =>
     var total = await db.Vehicles.CountAsync();
     var available = await db.Vehicles.CountAsync(x => x.Status == "Available");
     var maintenance = await db.Vehicles.CountAsync(x => x.Status == "Under Maintenance");
-    var offHire = await db.OffHireRecords.CountAsync(x => x.Status != "Closed");
+    var offHire = await db.OffHireRecords.CountAsync(x => x.Status == "Approved");
     var today = DateTime.UtcNow.Date;
     var tomorrow = today.AddDays(1);
     var appointments = await db.Appointments.CountAsync(x => x.StartAt >= today && x.StartAt < tomorrow);
-    var breakdowns = await db.Breakdowns.CountAsync(x => x.Status != "Closed");
+    var breakdowns = await db.Breakdowns.CountAsync(x => x.Status != "Closed" && x.Status != "Restored" && x.Status != "Cancelled");
     var pmOverdue = await db.PmObligations.CountAsync(x => x.Status == "Overdue");
-    var activeServices=await (from e in db.ServiceEvents.AsNoTracking() join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id join j0 in db.JobCards.AsNoTracking() on e.Id equals j0.ServiceEventId into jj from j in jj.DefaultIfEmpty() where e.Status!="Closed" orderby e.OpenedAt descending select new{eventNumber=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.AssignedSupervisor,e.SupervisorAssignedAt,status=e.Status,openedAt=e.OpenedAt,jobCard=j!=null?j.JobCardNumber:"",technician=j!=null?j.Technician:"",bay=j!=null?j.Bay:""}).Take(8).ToListAsync();
+    var activeServices=await (from e in db.ServiceEvents.AsNoTracking() join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id join j0 in db.JobCards.AsNoTracking() on e.Id equals j0.ServiceEventId into jj from j in jj.DefaultIfEmpty() where e.Status!="Closed"&&e.Status!="Cancelled" orderby e.OpenedAt descending select new{eventNumber=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.AssignedSupervisor,e.SupervisorAssignedAt,status=e.Status,openedAt=e.OpenedAt,jobCard=j!=null?j.JobCardNumber:"",technician=j!=null?j.Technician:"",bay=j!=null?j.Bay:""}).Take(8).ToListAsync();
     var openTasks=await db.WorkItems.CountAsync(x=>x.Status!="Completed"&&x.Status!="Cancelled");
     var unassignedTasks=await db.WorkItems.CountAsync(x=>x.Status!="Completed"&&x.Status!="Cancelled"&&!x.AssignedToTechnicianId.HasValue);
     var dueSoon=await db.PmObligations.CountAsync(x=>x.Status=="Due"||x.Status=="Due Soon");
-    var recentBreakdowns=await (from b in db.Breakdowns.AsNoTracking() join v in db.Vehicles.AsNoTracking() on b.VehicleId equals v.Id where b.Status!="Closed" orderby b.ReportedAt descending select new{breakdownNumber=b.BreakdownNumber,vehicle=v.RegistrationNumber,complaint=b.Complaint,status=b.Status,reportedAt=b.ReportedAt,location=b.Location}).Take(8).ToListAsync();
-    return Results.Ok(new { totalVehicles=total, available, underMaintenance=maintenance, offHire, appointmentsToday=appointments, breakdownRequests=breakdowns, pmOverdue, dueSoon, openTasks, unassignedTasks, slaBreaches=0, firstTimeFix=100.0, uptime30d=99.0, activeServices, recentBreakdowns });
+    var recentBreakdowns=await (from b in db.Breakdowns.AsNoTracking() join v in db.Vehicles.AsNoTracking() on b.VehicleId equals v.Id where b.Status!="Closed"&&b.Status!="Restored"&&b.Status!="Cancelled" orderby b.ReportedAt descending select new{breakdownNumber=b.BreakdownNumber,vehicle=v.RegistrationNumber,complaint=b.Complaint,status=b.Status,reportedAt=b.ReportedAt,location=b.Location}).Take(8).ToListAsync();
+    return Results.Ok(new { totalVehicles=total, available, underMaintenance=maintenance, offHire, appointmentsToday=appointments, breakdownRequests=breakdowns, pmOverdue, dueSoon, openTasks, unassignedTasks, slaBreaches=await ControlEndpoints.BreachCountAsync(db), firstTimeFix=(await ControlEndpoints.QualityAsync(db,DateTime.UtcNow.AddDays(-90),DateTime.UtcNow,null,null,null)).FirstTimeFix, uptime30d=await ControlEndpoints.UptimeAsync(db,DateTime.UtcNow.AddDays(-30),DateTime.UtcNow), activeServices, recentBreakdowns });
 });
 
 app.MapGet("/api/vehicles", async (AppDbContext db) =>
@@ -1723,7 +1733,7 @@ app.MapGet("/api/service-events/active", async (AppDbContext db) =>
                       from b in bb.DefaultIfEmpty()
                       join j in db.JobCards.AsNoTracking() on e.Id equals j.ServiceEventId into jj
                       from j in jj.DefaultIfEmpty()
-                      where e.Status!="Closed"
+                      where e.Status!="Closed"&&e.Status!="Cancelled"
                       orderby e.OpenedAt descending
                       select new { e.Id,e.VehicleId,eventNo=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.AssignedSupervisor,e.SupervisorAssignedAt,e.Status,e.OpenedAt,
                           breakdownId=e.BreakdownId,breakdownNumber=b!=null?b.BreakdownNumber:"",
@@ -2002,9 +2012,10 @@ app.MapPost("/api/work-orders/{jobCardId:guid}/evidence",async(Guid jobCardId,Ht
     Audit(db,"UPLOAD","WorkEvidence",x.Id,$"{x.Stage}:{x.FileName}",x.UploadedBy);await db.SaveChangesAsync();return Results.Ok(new{x.Id,x.FileName,x.ContentType,x.Stage,url=$"/api/work-evidence/{x.Id}/content"});
 }).DisableAntiforgery();
 
-app.MapGet("/api/work-evidence/{id:guid}/content",async(Guid id,AppDbContext db)=>
+app.MapGet("/api/work-evidence/{id:guid}/content",async(Guid id,bool? download,AppDbContext db,HttpResponse response)=>
 {
-    var x=await db.WorkEvidence.AsNoTracking().FirstOrDefaultAsync(e=>e.Id==id);return x is null?Results.NotFound():Results.File(x.Content,x.ContentType,x.FileName,enableRangeProcessing:true);
+    response.Headers["X-Content-Type-Options"]="nosniff";response.Headers["Content-Security-Policy"]="sandbox";
+    var x=await db.WorkEvidence.AsNoTracking().FirstOrDefaultAsync(e=>e.Id==id);return x is null?Results.NotFound():Results.File(x.Content,x.ContentType,download==false?null:x.FileName,enableRangeProcessing:true);
 });
 
 app.MapGet("/api/parts/master", async (Guid? jobCardId, AppDbContext db) =>
@@ -2312,6 +2323,10 @@ app.MapGet("/api/job-cards/{id:guid}/history", async(Guid id, AppDbContext db)=>
     ids.AddRange(await db.MaintenanceRequests.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
     ids.AddRange(await db.Defects.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
     ids.AddRange(await db.PartRequests.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
+    ids.AddRange(await db.WorkEvidence.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
+    ids.AddRange(await db.VehicleDocuments.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
+    ids.AddRange(await db.WarrantyClaims.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
+    ids.AddRange(await db.SlaClocks.Where(x=>x.ServiceEventId==visit.Id).Select(x=>x.Id).ToListAsync());
     ids.AddRange(await db.QcInspections.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync());
     var instances=await db.WorkTemplateInstances.Where(x=>x.JobCardId==id).Select(x=>x.Id).ToListAsync();
     ids.AddRange(await db.WorkTemplateFieldInstances.Where(x=>instances.Contains(x.WorkTemplateInstanceId)).Select(x=>x.Id).ToListAsync());
@@ -2331,7 +2346,7 @@ app.MapGet("/api/campaigns/open", async (AppDbContext db) => Results.Ok(await db
 app.MapGet("/api/documents/{vin}", async (string vin, AppDbContext db) =>
 {
     var v=await db.Vehicles.FirstOrDefaultAsync(x=>x.Vin==vin || x.RegistrationNumber==vin); if(v is null) return Results.NotFound();
-    return Results.Ok(await db.VehicleDocuments.AsNoTracking().Where(x=>x.VehicleId==v.Id).OrderByDescending(x=>x.UploadedAt).ToListAsync());
+    return Results.Ok(await db.VehicleDocuments.AsNoTracking().Where(x=>x.VehicleId==v.Id).OrderByDescending(x=>x.UploadedAt).Select(x=>new{x.Id,x.VehicleId,x.DocumentType,x.FileName,x.StorageReference,x.UploadedBy,x.UploadedAt,x.ExpiresAt,x.Status,x.JobCardId,hasFile=x.Content.Length>0}).ToListAsync());
 });
 app.MapGet("/api/search", async (string? q, AppDbContext db) => Results.Ok(await LinkedSearch.FindAsync(db, q)));
 
@@ -2421,53 +2436,6 @@ app.MapPut("/api/technicians/{id:guid}", async (Guid id, Technician r, AppDbCont
 app.MapGet("/api/technicians", async (AppDbContext db)=>Results.Ok(await db.Technicians.AsNoTracking().OrderBy(x=>x.EmployeeCode).ToListAsync()));
 app.MapPost("/api/technicians", async (Technician t, AppDbContext db)=>{t.Id=Guid.NewGuid();db.Technicians.Add(t);Audit(db,"CREATE","Technician",t.Id,t.EmployeeCode);await db.SaveChangesAsync();return Results.Created($"/api/technicians/{t.Id}",t);});
 
-app.MapGet("/api/availability", async (AppDbContext db)=>
-{
-    var rows=await (from a in db.VehicleAvailabilityLedger.AsNoTracking() join v in db.Vehicles.AsNoTracking() on a.VehicleId equals v.Id orderby a.StartAt descending
-                    select new {a.Id,a.VehicleId,vehicle=v.RegistrationNumber,a.State,a.StartAt,a.EndAt,a.ReasonCode,a.SourceType,a.RuleVersion}).Take(300).ToListAsync();
-    return Results.Ok(rows);
-});
-app.MapPost("/api/availability/correct", async (AvailabilityCorrection r, AppDbContext db)=>
-{
-    var prev=await db.VehicleAvailabilityLedger.FindAsync(r.CorrectsLedgerId); if(prev is null)return Results.NotFound();
-    var a=new VehicleAvailabilityLedger{VehicleId=prev.VehicleId,State=r.State,StartAt=r.StartAt,EndAt=r.EndAt,ReasonCode=r.ReasonCode,SourceType="Correction",ChangedBy=r.ChangedBy,RuleVersion="AVL-1.0",CorrectsLedgerId=prev.Id};
-    db.VehicleAvailabilityLedger.Add(a);Audit(db,"CORRECT","Availability",a.Id,r.ReasonCode,r.ChangedBy);await db.SaveChangesAsync();return Results.Ok(a);
-});
-
-app.MapGet("/api/offhire", async (AppDbContext db)=>
-{
-    var rows=await (from o in db.OffHireRecords.AsNoTracking() join v in db.Vehicles.AsNoTracking() on o.VehicleId equals v.Id orderby o.StartAt descending
-                    select new{o.Id,o.VehicleId,vehicle=v.RegistrationNumber,o.StartAt,o.ExpectedReturnAt,o.EndAt,o.ReasonCode,o.RequestedBy,o.ApprovedBy,o.Status}).ToListAsync();
-    return Results.Ok(rows);
-});
-app.MapPost("/api/offhire", async (OffHireRequest r, AppDbContext db)=>
-{
-    var v=await db.Vehicles.FindAsync(r.VehicleId);if(v is null)return Results.BadRequest(new{message="Vehicle not found."});
-    var o=new OffHireRecord{VehicleId=v.Id,StartAt=r.StartAt,ExpectedReturnAt=r.ExpectedReturnAt,ReasonCode=r.ReasonCode,RequestedBy=r.RequestedBy,Status="Pending Approval"};
-    db.OffHireRecords.Add(o);Audit(db,"REQUEST","OffHire",o.Id,r.ReasonCode,r.RequestedBy);await db.SaveChangesAsync();return Results.Ok(o);
-});
-app.MapPost("/api/offhire/{id:guid}/approve", async (Guid id, ApprovalRequest r, AppDbContext db)=>
-{
-    var o=await db.OffHireRecords.FindAsync(id);if(o is null)return Results.NotFound();o.Status="Approved";o.ApprovedBy=r.User;
-    var v=await db.Vehicles.FindAsync(o.VehicleId);if(v!=null)v.Status="Off-Hire";Audit(db,"APPROVE","OffHire",o.Id,o.ReasonCode,r.User);await db.SaveChangesAsync();return Results.Ok(o);
-});
-app.MapPost("/api/offhire/{id:guid}/recommission", async (Guid id, RecommissionRequest r, AppDbContext db)=>
-{
-    var o=await db.OffHireRecords.FindAsync(id);if(o is null)return Results.NotFound();
-    var ri=new RecommissioningInspection{OffHireRecordId=o.Id,VehicleId=o.VehicleId,Inspector=r.Inspector,Result=r.Result,Remarks=r.Remarks,InspectedAt=DateTime.UtcNow};
-    db.RecommissioningInspections.Add(ri);
-    if(r.Result=="Pass"){o.Status="Closed";o.EndAt=DateTime.UtcNow;var v=await db.Vehicles.FindAsync(o.VehicleId);if(v!=null)v.Status="Available";}
-    Audit(db,"RECOMMISSION","OffHire",o.Id,r.Result,r.Inspector);await db.SaveChangesAsync();return Results.Ok(ri);
-});
-
-app.MapGet("/api/warranty", async (AppDbContext db)=>
-{
-    var rows=await (from w in db.WarrantyEntitlements.AsNoTracking() join v in db.Vehicles.AsNoTracking() on w.VehicleId equals v.Id orderby w.EndDate
-                    select new{w.Id,w.VehicleId,vehicle=v.RegistrationNumber,w.EntitlementType,w.ReferenceNo,w.StartDate,w.EndDate,w.OdometerLimitKm,w.Status,w.CoverageNotes}).ToListAsync();
-    return Results.Ok(rows);
-});
-app.MapPost("/api/warranty", async (WarrantyEntitlement w, AppDbContext db)=>{w.Id=Guid.NewGuid();db.WarrantyEntitlements.Add(w);Audit(db,"CREATE","Warranty",w.Id,w.ReferenceNo);await db.SaveChangesAsync();return Results.Ok(w);});
-
 app.MapGet("/api/campaigns", async (AppDbContext db)=>Results.Ok(await db.Campaigns.AsNoTracking().OrderByDescending(x=>x.EffectiveFrom).ToListAsync()));
 app.MapPost("/api/campaigns", async (Campaign c, AppDbContext db)=>{c.Id=Guid.NewGuid();db.Campaigns.Add(c);Audit(db,"CREATE","Campaign",c.Id,c.CampaignCode);await db.SaveChangesAsync();return Results.Ok(c);});
 app.MapPost("/api/campaigns/{campaignId:guid}/vehicles/{vehicleId:guid}", async (Guid campaignId,Guid vehicleId,AppDbContext db)=>
@@ -2476,38 +2444,6 @@ app.MapPost("/api/campaigns/{campaignId:guid}/vehicles/{vehicleId:guid}", async 
     if(await db.VehicleCampaigns.AnyAsync(x=>x.CampaignId==campaignId&&x.VehicleId==vehicleId))return Results.Conflict(new{message="Vehicle already assigned."});
     var vc=new VehicleCampaign{CampaignId=campaignId,VehicleId=vehicleId};db.VehicleCampaigns.Add(vc);Audit(db,"ASSIGN","CampaignVehicle",vc.Id,$"{campaignId}/{vehicleId}");await db.SaveChangesAsync();return Results.Ok(vc);
 });
-
-app.MapGet("/api/documents", async (AppDbContext db)=>
-{
-    var rows=await (from d in db.VehicleDocuments.AsNoTracking() join v in db.Vehicles.AsNoTracking() on d.VehicleId equals v.Id orderby d.UploadedAt descending
-                    select new{d.Id,d.VehicleId,vehicle=v.RegistrationNumber,d.DocumentType,d.FileName,d.StorageReference,d.UploadedBy,d.UploadedAt,d.Status}).ToListAsync();
-    return Results.Ok(rows);
-});
-app.MapPost("/api/documents", async (VehicleDocument d, AppDbContext db)=>{d.Id=Guid.NewGuid();d.UploadedAt=DateTime.UtcNow;db.VehicleDocuments.Add(d);Audit(db,"UPLOAD","Document",d.Id,d.FileName,d.UploadedBy);await db.SaveChangesAsync();return Results.Ok(d);});
-
-app.MapGet("/api/sla", async (AppDbContext db)=>
-{
-    var rows=await (from s in db.SlaClocks.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on s.ServiceEventId equals e.Id orderby s.StartedAt descending
-                    select new{s.Id,s.ServiceEventId,eventNo=e.EventNumber,e.Priority,s.ClockType,s.StartedAt,s.DueAt,s.PausedAt,s.TotalPausedMinutes,s.PauseReason,s.Status}).ToListAsync();
-    return Results.Ok(rows);
-});
-app.MapPost("/api/sla/{serviceEventId:guid}", async (Guid serviceEventId,SlaStartRequest r,AppDbContext db)=>
-{
-    if(!await db.ServiceEvents.AnyAsync(x=>x.Id==serviceEventId))return Results.NotFound();
-    var s=new SlaClock{ServiceEventId=serviceEventId,ClockType=r.ClockType,StartedAt=DateTime.UtcNow,DueAt=DateTime.UtcNow.AddMinutes(r.TargetMinutes),Status="Running"};
-    db.SlaClocks.Add(s);Audit(db,"START","SLA",s.Id,r.ClockType);await db.SaveChangesAsync();return Results.Ok(s);
-});
-app.MapPost("/api/sla/{id:guid}/pause", async (Guid id,PauseRequest r,AppDbContext db)=>{var s=await db.SlaClocks.FindAsync(id);if(s is null)return Results.NotFound();s.PausedAt=DateTime.UtcNow;s.PauseReason=r.Reason;s.Status="Paused";Audit(db,"PAUSE","SLA",s.Id,r.Reason);await db.SaveChangesAsync();return Results.Ok(s);});
-app.MapPost("/api/sla/{id:guid}/resume", async (Guid id,AppDbContext db)=>{var s=await db.SlaClocks.FindAsync(id);if(s is null)return Results.NotFound();if(s.PausedAt.HasValue){s.TotalPausedMinutes+=(int)(DateTime.UtcNow-s.PausedAt.Value).TotalMinutes;s.PausedAt=null;}s.Status="Running";Audit(db,"RESUME","SLA",s.Id,"");await db.SaveChangesAsync();return Results.Ok(s);});
-
-app.MapGet("/api/quality", async (AppDbContext db)=>
-{
-    var qcs=await db.QcInspections.AsNoTracking().ToListAsync();var total=qcs.Count;var pass=qcs.Count(x=>x.Result=="Pass");
-    var repeats=await db.RepeatFailureMatches.CountAsync(x=>x.IsRepeat);var openRca=await db.Defects.CountAsync(x=>x.Disposition!="Closed"&&x.RcaSummary=="");
-    var ftf=await db.FirstTimeFixResults.AsNoTracking().ToListAsync();var eligible=ftf.Count(x=>x.Eligible);var ftfPct=eligible==0?100:Math.Round(ftf.Count(x=>x.Eligible&&x.Passed)*100.0/eligible,1);
-    return Results.Ok(new{firstTimeFix=ftfPct,repeatFailures=repeats,openRca,qcPass=total==0?100:Math.Round(pass*100.0/total,1)});
-});
-
 
 // ---------------- v1.5 Functional Fleet Maintenance Baseline ----------------
 app.MapGet("/api/maintenance-requests/config", async (AppDbContext db) =>
@@ -2620,38 +2556,7 @@ app.MapPost("/api/work-orders/{jobCardId:guid}/costs", async (Guid jobCardId,Wor
     db.WorkOrderCosts.Add(x);Audit(db,"CREATE","WorkOrderCost",x.Id,$"{costType}:{x.Amount}",r.PostedBy);
     await db.SaveChangesAsync();return Results.Ok(x);
 });
-app.MapGet("/api/analytics/maintenance", async (AppDbContext db)=>
-{
-    var vehicles=await db.Vehicles.AsNoTracking().ToListAsync();var vehicleCount=vehicles.Count;
-    var pmTotal=await db.PmObligations.CountAsync();var pmOverdue=await db.PmObligations.CountAsync(x=>x.Status=="Overdue");
-    var closed=await db.ServiceEvents.AsNoTracking().Where(x=>x.ClosedAt!=null).ToListAsync();var mttr=closed.Count==0?0:Math.Round(closed.Average(x=>(x.ClosedAt!.Value-x.OpenedAt).TotalHours),1);
-    var ftf=await db.FirstTimeFixResults.AsNoTracking().Where(x=>x.Eligible).ToListAsync();var ftfPct=ftf.Count==0?100:Math.Round(ftf.Count(x=>x.Passed)*100.0/ftf.Count,1);
-    var repeat=await db.RepeatFailureMatches.CountAsync(x=>x.IsRepeat);var avail=vehicles.Count(x=>x.Status=="Available");
-    var partCost=await db.PartTransactions.Where(x=>x.TransactionType=="Issue"||x.TransactionType=="Return").SumAsync(x=>(decimal?)x.ExtendedCost)??0;
-    var labourCost=await db.LabourEntries.SumAsync(x=>(decimal?)x.CostAmount)??0;
-    var externalCost=await db.WorkOrderCosts.Where(x=>x.CostType=="External").SumAsync(x=>(decimal?)x.Amount)??0;
-    var otherCost=await db.WorkOrderCosts.Where(x=>x.CostType!="External").SumAsync(x=>(decimal?)x.Amount)??0;
-    var totalCost=partCost+labourCost+externalCost+otherCost;var odo=vehicles.Sum(x=>x.OdometerKm);
-    var tasks=await db.WorkItems.AsNoTracking().ToListAsync();var completedTasks=tasks.Count(x=>x.Status=="Completed");
-    var topParts=await db.PartTransactions.AsNoTracking().Where(x=>x.TransactionType=="Issue"||x.TransactionType=="Return").GroupBy(x=>new{x.PartNumber,x.PartDescription})
-        .Select(g=>new{g.Key.PartNumber,g.Key.PartDescription,quantity=g.Sum(x=>x.Quantity),cost=g.Sum(x=>x.ExtendedCost)}).OrderByDescending(x=>x.cost).Take(10).ToListAsync();
-    var topVehicles=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
-                           join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
-                           let parts=db.PartTransactions.Where(x=>x.JobCardId==j.Id&&(x.TransactionType=="Issue"||x.TransactionType=="Return")).Sum(x=>(decimal?)x.ExtendedCost)??0
-                           let labour=db.LabourEntries.Where(x=>x.JobCardId==j.Id).Sum(x=>(decimal?)x.CostAmount)??0
-                           let extra=db.WorkOrderCosts.Where(x=>x.JobCardId==j.Id).Sum(x=>(decimal?)x.Amount)??0
-                           group new{parts,labour,extra} by new{v.Id,v.RegistrationNumber} into g
-                           select new{vehicle=g.Key.RegistrationNumber,cost=g.Sum(x=>x.parts+x.labour+x.extra)}).OrderByDescending(x=>x.cost).Take(10).ToListAsync();
-    var techProductivity=await (from l in db.LabourEntries.AsNoTracking() group l by l.Technician into g select new{technician=g.Key,hours=g.Sum(x=>x.Hours),cost=g.Sum(x=>x.CostAmount)}).OrderByDescending(x=>x.hours).Take(10).ToListAsync();
-    return Results.Ok(new{
-      vehicles=vehicleCount,availabilityPct=vehicleCount==0?100:Math.Round(avail*100.0/vehicleCount,1),
-      pmCompliancePct=pmTotal==0?100:Math.Round((pmTotal-pmOverdue)*100.0/pmTotal,1),mttrHours=mttr,firstTimeFixPct=ftfPct,repeatFailures=repeat,
-      taskCompletionPct=tasks.Count==0?100:Math.Round(completedTasks*100.0/tasks.Count,1),
-      partsCost=partCost,labourCost,externalCost,otherCost,totalMaintenanceCost=totalCost,costPerKm=odo==0?0:Math.Round(totalCost/odo,2),
-      openRequests=await db.MaintenanceRequests.CountAsync(x=>x.Status=="Open"),openWorkOrders=await db.JobCards.CountAsync(x=>x.Status!="Completed"&&x.Status!="Closed"),
-      topParts,topVehicles,technicianProductivity=techProductivity
-    });
-});
+app.MapControlEndpoints();
 
 app.MapFallback(async context =>
 {
