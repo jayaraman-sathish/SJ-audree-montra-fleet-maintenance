@@ -43,3 +43,8 @@ html{font-size:14px}body{line-height:1.45}button,a,input,select,textarea{touch-a
  .shell main table[fleetGrid] .fleet-action-cell a,.shell main table[fleetGrid] .fleet-action-cell button{min-height:44px}
 }
 @media(max-width:600px){.shell main .page{padding:14px}.shell main .title,.shell main .head{flex-wrap:wrap}.shell main .btn{min-height:44px}.shell main table.fleet-records .fleet-data-row{grid-template-columns:1fr!important}.shell main input:not([type=checkbox]):not([type=radio]),.shell main select,.shell main textarea{font-size:16px}.shell main .filters,.shell main .fields,.shell main .form-grid{grid-template-columns:1fr!important}.shell main .filters>*,.shell main .fields>*,.shell main .form-grid>*{grid-column:auto!important}.shell main .kpis{gap:8px}}
+
+@media print{.shell{display:block!important}.shell>aside,.app-header,app-page-tools,.nav-backdrop,button,.filters,.tabs,.modal-backdrop,.modal-card{display:none!important}#fleet-page-content{width:100%!important}main{overflow:visible!important}.fleet-grid-scroll,.table-wrap{overflow:visible!important;max-height:none!important}table{font-size:10px!important;width:100%!important}th,td{padding:5px!important;min-width:0!important;position:static!important}tr{break-inside:avoid}a{color:#152c46!important;text-decoration:none}thead{display:table-header-group}@page{size:landscape;margin:10mm}}
+[hidden]{display:none!important}
+
+@media print{.editor,.backdrop{display:none!important}}

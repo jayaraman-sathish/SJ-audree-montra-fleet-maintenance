@@ -32,8 +32,9 @@ public static class ReleaseReadiness
             blockers.Add(new("Checklist", field.FieldCode, $"{field.Label}: record the required result or complete corrective work and recheck.", instances.Single(x => x.Id == field.WorkTemplateInstanceId).WorkItemId));
         var defects = await db.Defects.AsNoTracking().Where(x => x.JobCardId == jobId && x.Disposition != "Closed").ToListAsync();
         foreach (var defect in defects) blockers.Add(new("Issue", defect.DefectNumber, defect.Description));
-        var parts = await db.PartRequests.AsNoTracking().Where(x => x.JobCardId == jobId && x.Status != "Consumed" && x.Status != "Returned" && x.Status != "Cancelled").ToListAsync();
-        foreach (var part in parts) blockers.Add(new("Parts", part.RequestNumber, $"Parts request is {part.Status}. Consume, return or cancel it in Parts & Labour."));
+        var requests = await db.PartRequests.AsNoTracking().Where(x => x.JobCardId == jobId).ToListAsync();
+        var parts = requests.Where(x=>!InventoryRules.Settled(x)).ToList();
+        foreach (var part in parts) blockers.Add(new("Parts", part.RequestNumber, $"Parts request is {part.Status}. Settle issued quantities and close any unneeded balance in Parts & Inventory."));
         var legacy = await db.ChecklistExecutions.AsNoTracking().Where(x => x.JobCardId == jobId).ToListAsync();
         foreach (var check in legacy.Where(x => (x.IsMandatory && x.Result == "Pending") || x.Result == "Fail" || x.Result == "Not OK"))
             blockers.Add(new("Checklist", check.ItemCode, $"{check.ItemText}: complete or recheck this checklist item.", check.WorkItemId));
