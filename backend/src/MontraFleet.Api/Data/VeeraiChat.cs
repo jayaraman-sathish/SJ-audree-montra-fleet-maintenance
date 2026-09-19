@@ -18,17 +18,17 @@ public static class VeeraiChat {
  public static string KeyHash(string key)=>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
  public static bool SessionValid(string? token,IDataProtector protector,string key){try{var parts=protector.Unprotect(token??"").Split('|');return parts.Length==2&&long.TryParse(parts[0],out var until)&&until>DateTimeOffset.UtcNow.ToUnixTimeSeconds()&&Veerai.Authorized(parts[1],KeyHash(key));}catch{return false;}}
  public static string Normalize(string s)=>Regex.Replace(s.ToUpperInvariant(),"[^A-Z0-9]","");
+ public static bool Mentions(string question,string reference)=>Normalize(reference).Length>4&&Regex.IsMatch(question,@"(?<![A-Z0-9])"+string.Join(@"[\s-]*",Normalize(reference).Select(c=>Regex.Escape(c.ToString())))+@"(?![A-Z0-9])",RegexOptions.IgnoreCase);
  public static async Task<VeerChatContext> Resolve(AppDbContext db,string question,Guid? current,CancellationToken ct){
   var rows=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id orderby e.OpenedAt descending select new{j.Id,j.JobCardNumber,v.RegistrationNumber,e.OpenedAt}).ToListAsync(ct);
-  var q=Normalize(question);
-  var exact=rows.Where(x=>Normalize(x.JobCardNumber).Length>4&&q.Contains(Normalize(x.JobCardNumber))).ToList();
+  var exact=rows.Where(x=>Mentions(question,x.JobCardNumber)).ToList();
   var vehicles=await db.Vehicles.AsNoTracking().Select(x=>x.RegistrationNumber).ToListAsync(ct);
-  var matched=vehicles.Where(x=>Normalize(x).Length>4&&q.Contains(Normalize(x))).ToList();
+  var matched=vehicles.Where(x=>Mentions(question,x)).ToList();
   var candidates=exact.Count>0?exact:rows.Where(x=>matched.Contains(x.RegistrationNumber)).ToList();
   if(candidates.Count>1) return new(null,"", "Which service visit do you mean?",candidates.Take(10).Select(x=>new VeerChatChoice(x.Id,$"{x.RegistrationNumber} · {x.JobCardNumber} · {x.OpenedAt:dd MMM yyyy}")).ToArray());
   if(candidates.Count==1){var x=candidates[0];return new(x.Id,$"{x.RegistrationNumber} · {x.JobCardNumber}",null,[]);}
   if(matched.Count>0)return new(null,"","No matching service job found for that vehicle. You can still ask a general Montra service question.",[]);
-  if(Regex.IsMatch(question,@"\b(?:JC|WO|SE|BD)[\s-]*\d{4}[\s-]*\d+\b|\b[A-Z]{2}[\s-]*\d{1,2}[\s-]*(?:[A-Z]{1,3}[\s-]*)?\d{4}\b",RegexOptions.IgnoreCase))return new(null,"","No match found for that vehicle or job reference. Please check the number.",[]);
+  if(Regex.IsMatch(question,@"\b(?:JC|WO|SE|BD)[\s-]*\d{4}[\s-]*\d+\b|\b[A-Z]{2}[\s-]*\d{1,2}[\s-]*(?:[A-Z]{1,3}[\s-]*)?\d{4,}\b",RegexOptions.IgnoreCase))return new(null,"","No match found for that vehicle or job reference. Please check the number.",[]);
   if(current.HasValue){var x=rows.SingleOrDefault(x=>x.Id==current);return x==null?new(null,"","No matching service job found.",[]):new(x.Id,$"{x.RegistrationNumber} · {x.JobCardNumber}",null,[]);}
   return new(null,"General Montra guidance",null,[]);
  }

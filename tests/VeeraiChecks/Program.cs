@@ -63,6 +63,7 @@ Check(!VeeraiChat.SessionValid("bad",protector,config["Veerai:AccessKey"]!),"For
 Check(!VeeraiChat.SessionValid(session,protector,new string('y',32)),"Key rotation revokes old sessions");
 var expired=protector.Protect($"{DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeSeconds()}|{VeeraiChat.KeyHash(config["Veerai:AccessKey"]!)}");
 Check(!VeeraiChat.SessionValid(expired,protector,config["Veerai:AccessKey"]!),"Expired browser session rejected");
+Check(VeeraiChat.Mentions("Why ts09 dc2002?","TS09DC2002")&&!VeeraiChat.Mentions("TS09DC20020","TS09DC2002"),"Vehicle references match complete identifiers only");
 Check(VeeraiChat.Normalize("ts09-dc 2002")=="TS09DC2002","Chat normalizes references");
 var general=await VeeraiChat.Resolve(db,"Why is a Montra not charging?",null,default);
 Check(general.JobId==null&&general.Message==null,"General Montra questions do not require a job");
