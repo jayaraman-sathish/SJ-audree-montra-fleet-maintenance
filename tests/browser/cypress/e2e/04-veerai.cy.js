@@ -31,7 +31,7 @@ describe('Veerai floating chat (provider replies are fixtures)',()=>{
  it('floats, moves, minimises and fits mobile screens',()=>{
   cy.visit('/');open();cy.get('app-veerai .chat').then($e=>{expect($e[0].getBoundingClientRect().width).to.be.lessThan(500);});
   cy.get('app-veerai header').trigger('pointerdown',{clientX:900,clientY:200});cy.document().trigger('pointermove',{clientX:800,clientY:240}).trigger('pointerup');cy.get('app-veerai .chat').should('have.class','moved');
-  cy.viewport(390,844);cy.get('app-veerai .chat').then($e=>{const r=$e[0].getBoundingClientRect();expect(r.left).to.be.at.least(0);expect(r.right).to.be.at.most(390);});cy.get('[aria-label="Minimise Veerai"]').click();cy.get('[aria-label="Open Veerai"]').should('be.visible');
+  cy.viewport(390,844);cy.get('app-veerai .chat').should($e=>{const r=$e[0].getBoundingClientRect();expect(r.left).to.be.at.least(0);expect(r.right).to.be.at.most(390);});cy.get('[aria-label="Minimise Veerai"]').click();cy.get('[aria-label="Open Veerai"]').should('be.visible');
  });
  it('unlocks once and retries the pending question without exposing the key in chat',()=>{
   let unlocked=false;
