@@ -101,7 +101,7 @@ public static class DemoVehicleSeedV179
                 ManufacturerCode = model.ManufacturerCode,
                 ModelMasterId = model.Id,
                 VariantMasterId = variant.Id,
-                ImageUrl = string.IsNullOrWhiteSpace(variant.ImageUrl) ? model.ImageUrl : variant.ImageUrl,
+                ImageUrl = "", // Inherit current model/variant reference at read time.
                 MotorNumber = $"DEMO-MTR-{s.Registration}",
                 PurchaseDate = purchase,
                 InvoiceNumber = $"DEMO-INV-{s.Registration}",

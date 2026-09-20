@@ -191,3 +191,13 @@ Check(VehicleImages.Resolve("", "variant.png","model.png")=="variant.png","Varia
 Check(VehicleImages.Resolve(null,"  ","model.png")=="model.png","Blank variant does not suppress model photo");
 Check(VehicleImages.Resolve(null,null,null)=="","Missing photo remains explicit, not fabricated");
 Console.WriteLine("Vehicle picture fallback checks passed.");
+await using(var imageDb=new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options)){
+ var reference=new VehicleModelMaster {ModelCode="SUPER_AUTO",ManufacturerCode="MONTRA"};
+ var custom=new VehicleModelMaster {ModelCode="EVIATOR",ManufacturerCode="MONTRA",ImageUrl="custom.png"};
+ var other=new VehicleModelMaster {ModelCode="SUPER_CARGO",ManufacturerCode="OTHER"};
+ imageDb.AddRange(reference,custom,other);await imageDb.SaveChangesAsync();await VehicleImages.SeedReferences(imageDb);
+ Check(reference.ImageUrl==VehicleImages.Products["SUPER_AUTO"]&&custom.ImageUrl=="custom.png"&&other.ImageUrl=="","Reference seeding preserves custom and non-Montra masters");
+ var unit=new Vehicle {ModelMasterId=reference.Id,ImageUrl=""};imageDb.Add(unit);await imageDb.SaveChangesAsync();imageDb.ChangeTracker.Clear();
+ var detached=await imageDb.Vehicles.AsNoTracking().ToListAsync();await VehicleImages.Populate(imageDb,detached);
+ Check(detached[0].ImageUrl==reference.ImageUrl&&(await imageDb.Vehicles.AsNoTracking().SingleAsync()).ImageUrl=="","Shared images resolve at read time without storing copied pictures");
+}
