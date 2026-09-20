@@ -17,7 +17,7 @@ import {Subscription} from 'rxjs';
 <p *ngIf="error" class="error" role="alert">{{error}} <button (click)="retry()" *ngIf="lastQuestion&&!busy">Retry</button></p>
 </div>
 <form *ngIf="needsUnlock" (ngSubmit)="unlock()" class="unlock"><label>Unlock this browser for 8 hours<input type="password" name="access" [(ngModel)]="access" placeholder="Administrator-provided Veerai key" autocomplete="off"></label><button type="submit" [disabled]="busy||!access.trim()">Unlock</button></form>
-<form (ngSubmit)="send()"><label class="sr-only" for="veer-message">Message Veerai</label><textarea id="veer-message" name="message" [(ngModel)]="draft" placeholder="Ask Veerai…" rows="2" maxlength="1500" (keydown.enter)="enter($event)"></textarea><button class="mic" type="button" (click)="toggleListening()" [disabled]="busy" [attr.aria-label]="listening?'Stop listening':'Speak to Veerai'">{{listening?'■':'🎙'}}</button><button *ngIf="speaking" class="mic stop-speaking" type="button" (click)="stopSpeaking()" aria-label="Stop speaking" title="Stop speaking">■</button><button class="send" type="submit" [disabled]="busy||!draft.trim()" aria-label="Send message">Send ↑</button><button *ngIf="busy" type="button" (click)="cancel()">Stop</button></form>
+<form (ngSubmit)="send()"><label class="sr-only" for="veer-message">Message Veerai</label><textarea id="veer-message" name="message" [(ngModel)]="draft" placeholder="Ask Veerai…" rows="2" maxlength="1500" (keydown.enter)="enter($event)"></textarea><button class="mic" type="button" (click)="toggleListening()" [disabled]="busy" [attr.aria-label]="listening?'Stop listening':'Speak to Veerai'">{{listening?'■':'🎙'}}</button><button *ngIf="speaking||busy" class="mic stop-speaking" type="button" (click)="stopAll()" aria-label="Stop Veerai" title="Stop Veerai">■</button><button class="send" type="submit" [disabled]="busy||!draft.trim()" aria-label="Send message">Send ↑</button></form>
 <footer>AI guidance · Verify before acting. Job notes and chat are sent to AI.</footer>
 </section>`,styles:[`
 :host{font-family:Arial,sans-serif;color:#17304e}.launch{position:fixed;right:22px;bottom:22px;z-index:1100;background:#125ece;color:white;border:0;border-radius:28px;padding:14px 20px;box-shadow:0 6px 24px #16345a40;cursor:pointer}
@@ -37,6 +37,7 @@ export class VeeraiComponent implements OnChanges,OnDestroy{
  stopListening(){try{this.recognition?.stop()}catch{}this.listening=false;}
  speak(text:string){if(this.mode!=='voice'||!(window as any).speechSynthesis)return;const utterance=new SpeechSynthesisUtterance(text);utterance.lang=this.language;utterance.onstart=()=>this.speaking=true;utterance.onend=()=>this.speaking=false;utterance.onerror=()=>this.speaking=false;(window as any).speechSynthesis.cancel();(window as any).speechSynthesis.speak(utterance);}
  stopSpeaking(){if((window as any).speechSynthesis)(window as any).speechSynthesis.cancel();this.speaking=false;}
+ stopAll(){this.cancel();this.stopSpeaking();this.stopListening();}
  @HostListener('document:keydown.escape') escape(){this.open=false;}
  enter(e:Event){const k=e as KeyboardEvent;if(!k.shiftKey&&!k.isComposing){k.preventDefault();this.send();}}
  send(){const text=this.draft.trim();if(!text||this.busy)return;this.draft='';this.submit(text,true);}
