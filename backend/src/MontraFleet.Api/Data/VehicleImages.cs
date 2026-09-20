@@ -3,9 +3,9 @@ using MontraFleet.Api.Models;
 namespace MontraFleet.Api.Data;
 public static class VehicleImages
 {
- public static string Resolve(string? vehicleImage,string? variantImage,string? modelImage)
+ public static string Resolve(string? vehicleImage,string? variantImage,string? modelImage,string? typeImage=null)
  {
-  foreach(var image in new[]{vehicleImage,variantImage,modelImage})
+  foreach(var image in new[]{vehicleImage,variantImage,modelImage,typeImage})
    if(!string.IsNullOrWhiteSpace(image))return image.Trim();
   return "";
  }
@@ -33,10 +33,11 @@ public static class VehicleImages
  public static async Task Populate(AppDbContext db,IEnumerable<Vehicle> vehicles){
   var models=await db.VehicleModelMasters.AsNoTracking().ToDictionaryAsync(x=>x.Id);
   var variants=await db.VehicleVariantMasters.AsNoTracking().ToDictionaryAsync(x=>x.Id);
+  var types=await db.MasterOptions.AsNoTracking().Where(x=>x.Category=="VEHICLE_TYPE").ToDictionaryAsync(x=>x.Code);
   foreach(var v in vehicles){
    var model=v.ModelMasterId.HasValue?models.GetValueOrDefault(v.ModelMasterId.Value):null;
    var variant=v.VariantMasterId.HasValue?variants.GetValueOrDefault(v.VariantMasterId.Value):null;
-   v.ImageUrl=Resolve(v.ImageUrl,variant?.ImageUrl,model?.ImageUrl);
+   v.ImageUrl=Resolve(v.ImageUrl,variant?.ImageUrl,model?.ImageUrl,model is null?null:types.GetValueOrDefault(model.VehicleTypeCode)?.ImageUrl);
   }
  }
 }

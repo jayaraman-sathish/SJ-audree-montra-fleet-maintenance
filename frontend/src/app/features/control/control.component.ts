@@ -25,6 +25,14 @@ export class ControlComponent implements OnInit {
  jobsForVehicle(){return this.jobs.filter(j=>!this.draft.vehicleId||this.vehicles.find(v=>v.id===this.draft.vehicleId)?.registrationNumber===j.vehicle)}
  open(kind:string,row:any=null){this.error='';this.message='';this.form=kind;this.file=null;this.draft={documentScope:this.documentScope,vehicleModelMasterId:'',vehicleType:'',manufacturer:'',title:'',revision:'',vehicleId:'',jobCardId:'',documentType:this.documentScope==='Manufacturer'?'Owner Manual':'Service Evidence',entitlementType:'Vehicle Warranty',referenceNo:'',startDate:'',endDate:'',odometerLimitKm:null,expiresAt:'',clockType:'Resolution',targetMinutes:240,result:'',remarks:'',description:'',amount:0,...(row?{id:row.id}:{} )};if(kind==='claim'){this.h.get<any[]>('/api/warranty').subscribe(x=>this.entitlements=x)}if(kind==='approve')this.draft.result='Approve';if(kind==='claimDecision'){this.draft.currentStatus=row.status;this.draft.result=row.status==='Draft'?'Submitted':row.status==='Submitted'?'Approved':'Paid';}}
  documentTab(scope:string){this.documentScope=scope;this.form='';this.file=null;this.clear()}
+ setDocumentScope(scope:string){
+  if(this.busy||this.draft.documentScope===scope)return;
+  this.draft.documentScope=scope;this.documentScope=scope;
+  this.draft.vehicleId='';this.draft.jobCardId='';this.draft.vehicleModelMasterId='';
+  this.draft.vehicleType='';this.draft.manufacturer='';this.draft.title='';this.draft.revision='';
+  this.draft.documentType=scope==='Manufacturer'?'Owner Manual':'Service Evidence';
+  this.documentKind='';this.documentModel='';this.error='';
+ }
  documentModels(){return this.modelMasters.filter(m=>!this.draft.vehicleType||m.vehicleTypeCode===this.draft.vehicleType)}
  get documentVehicleTypes(){return [...new Set(this.modelMasters.map(m=>m.vehicleTypeCode).filter(Boolean))].sort()}
  chooseDocumentModel(){const m=this.modelMasters.find(m=>m.id===this.draft.vehicleModelMasterId);this.draft.manufacturer=m?.manufacturerCode||'';this.draft.vehicleType=m?.vehicleTypeCode||this.draft.vehicleType}

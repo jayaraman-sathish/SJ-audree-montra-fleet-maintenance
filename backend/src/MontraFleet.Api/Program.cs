@@ -43,6 +43,14 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 var app = builder.Build();
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
+app.Use(async (context,next)=>{
+ context.Response.OnStarting(()=>{
+  if(context.Response.ContentType?.StartsWith("text/html",StringComparison.OrdinalIgnoreCase)==true)
+   context.Response.Headers["Cache-Control"]="no-cache";
+  return Task.CompletedTask;
+ });
+ await next();
+});
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseRateLimiter();
@@ -82,6 +90,7 @@ using (var scope = app.Services.CreateScope())
         CREATE TABLE IF NOT EXISTS "MasterOptions" (
           "Id" uuid PRIMARY KEY, "Category" text NOT NULL, "Code" text NOT NULL, "Name" text NOT NULL,
           "Value" text NOT NULL DEFAULT '', "Description" text NOT NULL DEFAULT '', "SortOrder" integer NOT NULL DEFAULT 0, "IsActive" boolean NOT NULL DEFAULT true);
+        ALTER TABLE "MasterOptions" ADD COLUMN IF NOT EXISTS "ImageUrl" text NOT NULL DEFAULT '';
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_MasterOptions_Category_Code" ON "MasterOptions" ("Category","Code");
 
         CREATE TABLE IF NOT EXISTS "VehicleModelMasters" (
@@ -823,11 +832,11 @@ static void Audit(AppDbContext db, string action, string entityType, Guid? entit
 }
 
 
-app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.7.7" }));
+app.MapGet("/api/health", () => Results.Ok(new { status="ok", service="MontraFleet.Api", version="1.8.25" }));
 app.MapGet("/api/db/health", async (AppDbContext db) =>
 {
     try { return await db.Database.CanConnectAsync()
-        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.7.7" })
+        ? Results.Ok(new { status="ok", database="PostgreSQL", connected=true, version="1.8.25" })
         : Results.Problem("Database connection check returned false.", statusCode:503); }
     catch (Exception ex) { return Results.Problem("Database connection failed", ex.Message, statusCode:503); }
 });
@@ -835,7 +844,7 @@ app.MapGet("/api/ui/health", (IWebHostEnvironment env) =>
 {
     var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
     var indexPath = Path.Combine(webRoot, "index.html");
-    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.7.7" });
+    return Results.Ok(new { status=File.Exists(indexPath)?"ok":"missing", indexExists=File.Exists(indexPath), webRoot, version="1.8.25" });
 });
 
 static decimal NextMetricDue(decimal current, decimal? initialDue, decimal interval)
@@ -944,7 +953,7 @@ app.MapPost("/api/pm/master-options", async (MasterOption r, AppDbContext db) =>
 });
 app.MapPut("/api/pm/master-options/{id:guid}", async (Guid id,MasterOption r,AppDbContext db)=>
 {
-    var x=await db.MasterOptions.FindAsync(id);if(x is null)return Results.NotFound();x.Name=r.Name;x.Value=r.Value;x.Description=r.Description;x.SortOrder=r.SortOrder;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
+    var x=await db.MasterOptions.FindAsync(id);if(x is null)return Results.NotFound();x.Name=r.Name;x.Value=r.Value;x.Description=r.Description;x.ImageUrl=r.ImageUrl;x.SortOrder=r.SortOrder;x.IsActive=r.IsActive;await db.SaveChangesAsync();return Results.Ok(x);
 });
 
 app.MapGet("/api/pm/vehicle-models", async (AppDbContext db) => Results.Ok(await db.VehicleModelMasters.AsNoTracking().OrderBy(x=>x.Name).ToListAsync()));
@@ -1480,6 +1489,7 @@ app.MapGet("/api/pm/plans/{id:guid}/tasks",async(Guid id,AppDbContext db)=>
 });
 
 app.MapGet("/api/pm/enrollments",async(AppDbContext db)=>{
+ var types=await db.MasterOptions.AsNoTracking().Where(x=>x.Category=="VEHICLE_TYPE").ToDictionaryAsync(x=>x.Code);
  var models=await db.VehicleModelMasters.AsNoTracking().ToDictionaryAsync(x=>x.Id);
  var variants=await db.VehicleVariantMasters.AsNoTracking().ToDictionaryAsync(x=>x.Id);
  var vehicles=await db.Vehicles.AsNoTracking().OrderBy(x=>x.RegistrationNumber).ToListAsync();
@@ -1487,7 +1497,7 @@ app.MapGet("/api/pm/enrollments",async(AppDbContext db)=>{
   VehicleModelMaster? model=null;VehicleVariantMaster? variant=null;
   if(v.ModelMasterId.HasValue)models.TryGetValue(v.ModelMasterId.Value,out model);
   if(v.VariantMasterId.HasValue)variants.TryGetValue(v.VariantMasterId.Value,out variant);
-  return new{v.Id,v.RegistrationNumber,v.Vin,v.Model,v.Variant,v.ModelMasterId,v.VariantMasterId,imageUrl=VehicleImages.Resolve(v.ImageUrl,variant?.ImageUrl,model?.ImageUrl),v.PurchaseDate,v.CommissioningDate,v.OdometerKm,v.OperatingHours,v.EnergyKwh,v.Status,v.MaintenanceProgramId,v.DepotCode,v.ServiceCentreCode,v.CustomerCode};
+  return new{v.Id,v.RegistrationNumber,v.Vin,v.Model,v.Variant,v.ModelMasterId,v.VariantMasterId,imageUrl=VehicleImages.Resolve(v.ImageUrl,variant?.ImageUrl,model?.ImageUrl,model is null?null:types.GetValueOrDefault(model.VehicleTypeCode)?.ImageUrl),v.PurchaseDate,v.CommissioningDate,v.OdometerKm,v.OperatingHours,v.EnergyKwh,v.Status,v.MaintenanceProgramId,v.DepotCode,v.ServiceCentreCode,v.CustomerCode};
  }));
 });
 app.MapPost("/api/pm/enroll",async(VehicleEnrollmentRequest r,AppDbContext db)=>
