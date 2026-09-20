@@ -1,6 +1,5 @@
 name: Fleet regression checks
 on:
-  push:
   pull_request:
   workflow_dispatch:
 permissions:
