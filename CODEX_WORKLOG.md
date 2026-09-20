@@ -46,6 +46,18 @@
 
 \- Build and test backend and frontend.
 
+\## Current Update In Progress
+
+\- VeerAI Chat/Voice toggle added in the working source.
+
+\- Voice languages: English, Hindi, Tamil and Malayalam.
+
+\- Browser microphone input and spoken response use the existing secured VeerAI chat API.
+
+\- Document files remain in PostgreSQL for the current Render environment; object storage is deferred until production.
+
+\- The document-save delay still requires verification on the deployed Render service to distinguish cold-start delay from database upload time.
+
 
 
 \## Build Commands
@@ -57,6 +69,5 @@
 
 
 ```cmd
-
 
 
