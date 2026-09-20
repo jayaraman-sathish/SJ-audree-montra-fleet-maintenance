@@ -17,7 +17,7 @@ import {Subscription} from 'rxjs';
 <p *ngIf="error" class="error" role="alert">{{error}} <button (click)="retry()" *ngIf="lastQuestion&&!busy">Retry</button></p>
 </div>
 <form *ngIf="needsUnlock" (ngSubmit)="unlock()" class="unlock"><label>Unlock this browser for 8 hours<input type="password" name="access" [(ngModel)]="access" placeholder="Administrator-provided Veerai key" autocomplete="off"></label><button type="submit" [disabled]="busy||!access.trim()">Unlock</button></form>
-<form (ngSubmit)="send()"><label class="sr-only" for="veer-message">Message Veerai</label><textarea id="veer-message" name="message" [(ngModel)]="draft" placeholder="Ask Veerai…" rows="2" maxlength="1500" (keydown.enter)="enter($event)"></textarea><button class="mic" type="button" (click)="toggleListening()" [disabled]="busy" [attr.aria-label]="listening?'Stop listening':'Speak to Veerai'">{{listening?'■':'🎙'}}</button><button class="send" type="submit" [disabled]="busy||!draft.trim()" aria-label="Send message">Send ↑</button><button *ngIf="busy" type="button" (click)="cancel()">Stop</button></form>
+<form (ngSubmit)="send()"><label class="sr-only" for="veer-message">Message Veerai</label><textarea id="veer-message" name="message" [(ngModel)]="draft" placeholder="Ask Veerai…" rows="2" maxlength="1500" (keydown.enter)="enter($event)"></textarea><button class="mic" type="button" (click)="toggleListening()" [disabled]="busy" [attr.aria-label]="listening?'Stop listening':'Speak to Veerai'">{{listening?'■':'🎙'}}</button><button *ngIf="speaking" class="mic stop-speaking" type="button" (click)="stopSpeaking()" aria-label="Stop speaking" title="Stop speaking">■</button><button class="send" type="submit" [disabled]="busy||!draft.trim()" aria-label="Send message">Send ↑</button><button *ngIf="busy" type="button" (click)="cancel()">Stop</button></form>
 <footer>AI guidance · Verify before acting. Job notes and chat are sent to AI.</footer>
 </section>`,styles:[`
 :host{font-family:Arial,sans-serif;color:#17304e}.launch{position:fixed;right:22px;bottom:22px;z-index:1100;background:#125ece;color:white;border:0;border-radius:28px;padding:14px 20px;box-shadow:0 6px 24px #16345a40;cursor:pointer}
@@ -26,16 +26,17 @@ header{min-height:64px;box-sizing:border-box;display:flex;justify-content:space-
 `]})
 export class VeeraiComponent implements OnChanges,OnDestroy{
  @Input() jobId='';@ViewChild('messages') messages?:ElementRef<HTMLDivElement>;
- needsUnlock=false;access='';open=false;draft='';busy=false;error='';contextId:string|null=null;contextLabel='';turns:any[]=[];choices:any[]=[];lastQuestion='';left:number|null=null;top:number|null=null;mode:'chat'|'voice'='chat';language='en-IN';listening=false;
+ needsUnlock=false;access='';open=false;draft='';busy=false;error='';contextId:string|null=null;contextLabel='';turns:any[]=[];choices:any[]=[];lastQuestion='';left:number|null=null;top:number|null=null;mode:'chat'|'voice'='chat';language='en-IN';listening=false;speaking=false;
  private request?:Subscription;private drag:any;private recognition:any;
  constructor(private http:HttpClient){}
- ngOnChanges(){this.reset();}ngOnDestroy(){this.request?.unsubscribe();this.stopListening();}
+ ngOnChanges(){this.reset();}ngOnDestroy(){this.request?.unsubscribe();this.stopListening();this.stopSpeaking();}
  openPanel(){this.open=true;this.scroll();}close(){this.cancel();this.open=false;this.access='';}
  reset(){this.cancel();this.turns=[];this.choices=[];this.error='';this.access='';this.contextId=this.jobId||null;this.contextLabel='';this.lastQuestion='';this.draft='';}
  cancel(){this.request?.unsubscribe();this.busy=false;}
  toggleListening(){if(this.listening){this.stopListening();return}const SpeechRecognition=(window as any).SpeechRecognition||(window as any).webkitSpeechRecognition;if(!SpeechRecognition){this.error='Voice input is not supported by this browser. Please use Microsoft Edge or Google Chrome.';return}this.error='';this.recognition=new SpeechRecognition();this.recognition.lang=this.language;this.recognition.continuous=false;this.recognition.interimResults=false;this.recognition.onstart=()=>this.listening=true;this.recognition.onresult=(e:any)=>{this.draft=Array.from(e.results).map((r:any)=>r[0]?.transcript||'').join(' ').trim();this.listening=false;if(this.mode==='voice'&&this.draft)this.send()};this.recognition.onerror=()=>{this.listening=false;this.error='Voice input could not be captured. Please try again.'};this.recognition.onend=()=>this.listening=false;this.recognition.start();}
  stopListening(){try{this.recognition?.stop()}catch{}this.listening=false;}
- speak(text:string){if(this.mode!=='voice'||!(window as any).speechSynthesis)return;const utterance=new SpeechSynthesisUtterance(text);utterance.lang=this.language;(window as any).speechSynthesis.cancel();(window as any).speechSynthesis.speak(utterance);}
+ speak(text:string){if(this.mode!=='voice'||!(window as any).speechSynthesis)return;const utterance=new SpeechSynthesisUtterance(text);utterance.lang=this.language;utterance.onstart=()=>this.speaking=true;utterance.onend=()=>this.speaking=false;utterance.onerror=()=>this.speaking=false;(window as any).speechSynthesis.cancel();(window as any).speechSynthesis.speak(utterance);}
+ stopSpeaking(){if((window as any).speechSynthesis)(window as any).speechSynthesis.cancel();this.speaking=false;}
  @HostListener('document:keydown.escape') escape(){this.open=false;}
  enter(e:Event){const k=e as KeyboardEvent;if(!k.shiftKey&&!k.isComposing){k.preventDefault();this.send();}}
  send(){const text=this.draft.trim();if(!text||this.busy)return;this.draft='';this.submit(text,true);}
