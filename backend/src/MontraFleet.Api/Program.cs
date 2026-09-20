@@ -62,6 +62,14 @@ using (var scope = app.Services.CreateScope())
     await db.Database.ExecuteSqlRawAsync("""
       ALTER TABLE "ServiceEvents" ADD COLUMN IF NOT EXISTS "OpenedOdometerKm" numeric NULL;
       ALTER TABLE "SlaClocks" ADD COLUMN IF NOT EXISTS "StoppedAt" timestamptz NULL;
+      ALTER TABLE "VehicleDocuments" ALTER COLUMN "VehicleId" DROP NOT NULL;
+      ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "DocumentScope" text NOT NULL DEFAULT 'Customer';
+      ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "VehicleModelMasterId" uuid NULL;
+      ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "Manufacturer" text NOT NULL DEFAULT '';
+      ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "VehicleType" text NOT NULL DEFAULT '';
+      ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "ModelName" text NOT NULL DEFAULT '';
+      ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "Revision" text NOT NULL DEFAULT '';
+      ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "Title" text NOT NULL DEFAULT '';
       ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "JobCardId" uuid NULL;
       ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "ExpiresAt" timestamptz NULL;
       ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "Content" bytea NOT NULL DEFAULT ''::bytea;

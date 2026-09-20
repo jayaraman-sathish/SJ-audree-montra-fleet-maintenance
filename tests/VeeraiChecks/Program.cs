@@ -80,6 +80,20 @@ bool badChat=false;try{VeeraiChat.Parse("{\"relevant\":true,\"reply\":\"Claim\",
 Check(badChat,"Chat rejects invented evidence references");
 using var schema=JsonDocument.Parse(JsonSerializer.Serialize(VeeraiChat.Format()));
 Check(schema.RootElement.GetProperty("strict").GetBoolean(),"Chat requests strict structured provider output");
+Check(VeeraiFleet.IsPendingList("what all vechile pending for service"),"Pending service accepts user's spelling");
+Check(VeeraiFleet.IsPendingList("what all system pensing for service"),"Pending service accepts informal question");
+Check(!VeeraiFleet.IsPendingList("why is charging taking more time")&&!VeeraiFleet.IsPendingList("what service pending for TS09DC2002"),"General faults and explicit vehicles retain chat resolver");
+var closedVehicle=new Vehicle {RegistrationNumber="CLOSED-ONLY"};
+var closedEvent=new ServiceEvent {VehicleId=closedVehicle.Id,Status="Closed",ClosedAt=DateTime.UtcNow};
+var intakeVehicle=new Vehicle {RegistrationNumber="INTAKE"};
+var intake=new Breakdown {VehicleId=intakeVehicle.Id,BreakdownNumber="BD-INTAKE"};
+var due=new PmObligation {VehicleId=intakeVehicle.Id,PlanCode="PM-DUE",DueDate=DateTime.UtcNow.AddDays(-1)};
+var future=new PmObligation {VehicleId=intakeVehicle.Id,PlanCode="PM-FUTURE",DueDate=DateTime.UtcNow.AddDays(30)};
+db.AddRange(closedVehicle,closedEvent,intakeVehicle,intake,due,future);await db.SaveChangesAsync();db.ChangeTracker.Clear();
+var pending=await VeeraiFleet.Pending(db,default);
+Check(pending.Any(x=>x.Reference=="SE-CURRENT")&&pending.Any(x=>x.Reference=="BD-INTAKE")&&pending.Any(x=>x.Reference=="PM-DUE"),"Pending includes open visits, unlinked intake and due PM");
+Check(!pending.Any(x=>x.Vehicle=="CLOSED-ONLY"||x.Reference=="PM-FUTURE"||x.Reference==b.BreakdownNumber),"Pending excludes closed work, future PM and linked breakdown duplicates");
+Check(db.ChangeTracker.Entries().Count()==0,"Fleet lookup is read-only");
 Console.WriteLine("Veerai checks passed. Provider is a protocol fixture; no live AI call made.");
 sealed class FixtureHandler(string text):HttpMessageHandler {
  public string? Body,Uri,Auth;public bool Completed=true,Fail;
