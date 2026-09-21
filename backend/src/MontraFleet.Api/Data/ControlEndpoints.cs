@@ -97,36 +97,6 @@ public static class ControlEndpoints
    if(r.Result=="Submitted"||r.Result=="Approved"){var w=await db.WarrantyEntitlements.FindAsync(c.WarrantyEntitlementId);var j=await db.JobCards.FindAsync(c.JobCardId);var e=j==null?null:await db.ServiceEvents.FindAsync(j.ServiceEventId);if(w==null||e==null)return Invalid("Linked records are missing.");var eligible=ControlRules.Eligibility(w,e.OpenedAt,e.OpenedOdometerKm);if(eligible!="Eligible")return Results.Conflict(new{message="Warranty at service intake: "+eligible});}
    c.Status=r.Result;c.DecisionBy=r.User;c.DecisionRemarks=r.Remarks;c.DecidedAt=DateTime.UtcNow;Log(db,r.Result.ToUpperInvariant(),"WarrantyClaim",id,r.Remarks,r.User);await db.SaveChangesAsync();await tx.CommitAsync();return Results.Ok(c);
   });
-  app.MapGet("/api/documents",async(AppDbContext db)=>{
-   var docs=await db.VehicleDocuments.AsNoTracking().OrderByDescending(d=>d.UploadedAt).Select(d=>new{d.Id,d.VehicleId,vehicle=db.Vehicles.Where(v=>v.Id==d.VehicleId).Select(v=>v.RegistrationNumber).FirstOrDefault(),d.JobCardId,d.DocumentScope,d.VehicleModelMasterId,d.Manufacturer,d.VehicleType,d.ModelName,d.Revision,d.Title,d.DocumentType,d.FileName,d.StorageReference,d.UploadedBy,d.UploadedAt,d.ExpiresAt,hasFile=d.Content.Length>0,status=d.ExpiresAt.HasValue&&d.ExpiresAt<DateTime.UtcNow?"Expired":d.Status,fileUrl="/api/documents/"+d.Id+"/file"}).ToListAsync();
-   var evidence=await(from d in db.WorkEvidence.AsNoTracking() join j in db.JobCards on d.JobCardId equals j.Id join e in db.ServiceEvents on j.ServiceEventId equals e.Id join v in db.Vehicles on e.VehicleId equals v.Id select new{d.Id,e.VehicleId,vehicle=v.RegistrationNumber,jobCardId=(Guid?)d.JobCardId,documentScope="Customer",documentType="Work evidence / "+d.Stage,d.FileName,storageReference="",d.UploadedBy,d.UploadedAt,expiresAt=(DateTime?)null,hasFile=d.Content.Length>0,status="Active",fileUrl="/api/work-evidence/"+d.Id+"/content"}).ToListAsync();
-   return Results.Ok(docs.Cast<object>().Concat(evidence.Cast<object>()));
-  });
-  app.MapPost("/api/documents/upload",async(HttpRequest request,AppDbContext db)=>{
-   if(!request.HasFormContentType)return Invalid("Select a file.");var form=await request.ReadFormAsync();var file=form.Files.GetFile("file");
-   if(file==null||file.Length==0||file.Length>10*1024*1024)return Invalid("Select a PDF, PNG or JPEG up to 10 MB.");
-   var documentScope=form["documentScope"].ToString().Trim();if(documentScope=="")documentScope="Customer";
-   if(documentScope!="Customer"&&documentScope!="Manufacturer")return Invalid("Select Customer or Manufacturer documents.");
-   Guid? vehicleId=null;VehicleModelMaster? model=null;
-   if(documentScope=="Customer"){
-    if(!Guid.TryParse(form["vehicleId"].ToString(),out var selectedVehicle)||!await db.Vehicles.AnyAsync(x=>x.Id==selectedVehicle))return Invalid("Select a vehicle.");vehicleId=selectedVehicle;
-   }else{
-    if(!string.IsNullOrEmpty(form["vehicleId"])||!string.IsNullOrEmpty(form["jobCardId"]))return Invalid("Manufacturer documents apply to a model, not a vehicle or Job Card.");
-    if(!Guid.TryParse(form["vehicleModelMasterId"].ToString(),out var modelId))return Invalid("Select a vehicle model.");
-    model=await db.VehicleModelMasters.AsNoTracking().FirstOrDefaultAsync(x=>x.Id==modelId&&x.IsActive);
-    if(model==null||string.IsNullOrWhiteSpace(model.VehicleTypeCode)||string.IsNullOrWhiteSpace(model.ManufacturerCode))return Invalid("Select an active model with manufacturer and vehicle type configured in Fleet Masters.");
-    if(!new[]{"Brochure","Owner Manual","Service Manual","Design / Drawing","Parts Catalogue","Service Bulletin","Other"}.Contains(form["documentType"].ToString()))return Invalid("Select a manufacturer document type.");
-    if(string.IsNullOrWhiteSpace(form["title"].ToString()))return Invalid("Enter document title.");
-   }
-   if(form["title"].ToString().Length>200||form["revision"].ToString().Length>80||form["documentType"].ToString().Length>120)return Invalid("Document metadata is too long.");
-   var user=form["user"].ToString();if(NoUser(user))return Invalid("Enter uploader name.");
-   Guid? jobId=null;if(!string.IsNullOrEmpty(form["jobCardId"])) {if(!Guid.TryParse(form["jobCardId"].ToString(),out var parsed)||!await(from j in db.JobCards join e in db.ServiceEvents on j.ServiceEventId equals e.Id where j.Id==parsed&&e.VehicleId==vehicleId select j.Id).AnyAsync())return Invalid("Job Card does not match vehicle.");jobId=parsed;}
-   DateTime? expiry=null;if(!string.IsNullOrEmpty(form["expiresAt"])){if(!DateTime.TryParse(form["expiresAt"].ToString(),out var d))return Invalid("Invalid expiry.");expiry=DateTime.SpecifyKind(d.Date,DateTimeKind.Utc).AddDays(1).AddTicks(-1);}
-   using var ms=new MemoryStream();await file.CopyToAsync(ms);var bytes=ms.ToArray();var pdf=bytes.AsSpan().StartsWith("%PDF-"u8);var png=bytes.AsSpan().StartsWith(new byte[]{137,80,78,71,13,10,26,10});var jpg=bytes.Length>3&&bytes[0]==255&&bytes[1]==216&&bytes[2]==255;
-   if(!pdf&&!png&&!jpg)return Invalid("File contents must be PDF, PNG or JPEG.");
-   var row=new VehicleDocument{DocumentScope=documentScope,VehicleModelMasterId=model?.Id,Manufacturer=model?.ManufacturerCode??"",VehicleType=model?.VehicleTypeCode??"",ModelName=model?.Name??"",Revision=form["revision"].ToString().Trim(),Title=form["title"].ToString().Trim(),VehicleId=vehicleId,JobCardId=jobId,DocumentType=form["documentType"].ToString(),FileName=Path.GetFileName(file.FileName),Content=bytes,ContentType=pdf?"application/pdf":png?"image/png":"image/jpeg",UploadedBy=user,ExpiresAt=expiry};
-   if(string.IsNullOrWhiteSpace(row.DocumentType))return Invalid("Enter document type.");db.VehicleDocuments.Add(row);Log(db,"UPLOAD","Document",row.Id,row.FileName,user);await db.SaveChangesAsync();return Results.Ok(new{row.Id});
-  });
   app.MapGet("/api/documents/{id:guid}/file",async(Guid id,bool? download,AppDbContext db,HttpResponse response)=>{
    var d=await db.VehicleDocuments.FindAsync(id);if(d==null||d.Content.Length==0)return Results.NotFound();response.Headers["X-Content-Type-Options"]="nosniff";response.Headers["Content-Security-Policy"]="sandbox";return Results.File(d.Content,d.ContentType,download==true?d.FileName:null);
   });
