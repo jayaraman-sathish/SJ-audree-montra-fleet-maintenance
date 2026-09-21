@@ -12,10 +12,8 @@ public static class DocumentUpload
                 .OrderByDescending(x => x.UploadedAt)
                 .Select(x => new
                 {
-                    x.Id, x.VehicleId, x.VehicleModelMasterId, x.JobCardId,
-                    x.DocumentScope, x.DocumentType, x.FileName, x.Title,
-                    x.Manufacturer, x.VehicleType, x.ModelName, x.Revision,
-                    x.UploadedBy, x.UploadedAt, x.ExpiresAt, x.Status
+                    x.Id, x.VehicleId, x.JobCardId, x.DocumentType, x.FileName,
+                    x.StorageReference, x.UploadedBy, x.UploadedAt, x.ExpiresAt, x.Status
                 })
                 .ToListAsync(ct)));
 
