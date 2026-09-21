@@ -3,3 +3,5 @@
 .document-scope-picker{padding:16px;margin:0 0 20px;background:#f3f7fc;border-radius:12px}.document-scope-picker>div{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.document-scope-picker button{background:white;color:#163e70;border:1px solid #b8cbe0;border-radius:8px;padding:12px 18px}.document-scope-picker button.selected{background:#163e70;color:white}.document-scope-picker p{margin-bottom:0}
 
 .field-error{display:block;color:#b91c1c;font-size:12px;font-weight:600;margin-top:5px}.invalid-field input,.invalid-field select{border-color:#dc2626;outline:2px solid #fee2e2}
+
+.field-error{display:block;color:#b91c1c;font-size:12px;font-weight:600;margin-top:5px}.invalid-field input,.invalid-field select{border-color:#dc2626;outline:2px solid #fee2e2}
