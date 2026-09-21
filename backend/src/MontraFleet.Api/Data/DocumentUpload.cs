@@ -20,8 +20,6 @@ public static class DocumentUpload
                 })
                 .ToListAsync(ct)));
 
-    public static void MapDocumentUpload(this WebApplication app)
-    {
         app.MapPost("/api/documents/upload", async (HttpRequest request, AppDbContext db, CancellationToken ct) =>
         {
             if (!request.HasFormContentType)
