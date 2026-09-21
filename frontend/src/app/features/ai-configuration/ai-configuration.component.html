@@ -1,0 +1,17 @@
+<section class="ai-config">
+  <div class="page-title"><div><h2>AI Configuration</h2><p>Control which Montra data VeerAI may read. All access is read-only.</p></div></div>
+  <div class="security-note"><strong>Security:</strong> VeerAI uses approved backend APIs. It cannot create, edit, approve, delete, close or release records.</div>
+  <div class="admin-key">
+    <label>AI Administrator key<input type="password" [(ngModel)]="key" placeholder="Enter configured Admin key"></label>
+    <label>Updated by<input [(ngModel)]="updatedBy" placeholder="Administrator name"></label>
+    <button (click)="load()" [disabled]="loading">{{loading?'Loading…':'Load configuration'}}</button>
+  </div>
+  <p class="alert" *ngIf="error">{{error}}</p><p class="success" *ngIf="message">{{message}}</p>
+  <div class="access-list" *ngIf="modules.length">
+    <div class="access-row" *ngFor="let item of modules">
+      <div><strong>{{item.name}}</strong><small>VeerAI may read this data through an approved API.</small></div>
+      <label class="switch"><input type="checkbox" [(ngModel)]="item.enabled"><span></span><b>{{item.enabled?'Enabled':'Disabled'}}</b></label>
+    </div>
+  </div>
+  <button class="save" *ngIf="modules.length" (click)="save()" [disabled]="saving">{{saving?'Saving…':'Save AI configuration'}}</button>
+</section>

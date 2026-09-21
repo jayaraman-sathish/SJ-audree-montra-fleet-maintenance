@@ -54,6 +54,7 @@ app.Use(async (context,next)=>{
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseRateLimiter();
+AiConfiguration.Map(app);
 DocumentUpload.MapDocumentUpload(app);
 
 using (var scope = app.Services.CreateScope())

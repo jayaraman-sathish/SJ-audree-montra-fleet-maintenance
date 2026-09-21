@@ -71,3 +71,16 @@
 ```cmd
 
 
+
+
+## 2026-09-21 — Configurable VeerAI access control
+
+- PR #72: https://github.com/jayaraman-sathish/SJ-audree-montra-fleet-maintenance/pull/72
+- Added **Configuration → AI Configuration** screen.
+- Added ten read-only module controls: Vehicles, Job Cards, Service Events, Breakdowns, Appointments, PM, Parts, Technicians, Documents and Audit.
+- Settings are stored in `MasterOptions` using category `AI_READ_ACCESS`.
+- Configuration changes are audited.
+- The screen and API require the server-side `Veerai:AdminKey` and `X-Veerai-Admin-Key` header.
+- The document upload endpoint and Save timeout from PR #71 are included in this branch.
+- Before deployment, set a strong Render environment variable named `Veerai__AdminKey`.
+- The remaining integration step is to make every VeerAI data query consult the selected module policy before returning records.
