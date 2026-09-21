@@ -7,6 +7,21 @@ public static class DocumentUpload
 {
     public static void MapDocumentUpload(this WebApplication app)
     {
+        app.MapGet("/api/documents", async (AppDbContext db, CancellationToken ct) =>
+            Results.Ok(await db.VehicleDocuments.AsNoTracking()
+                .OrderByDescending(x => x.UploadedAt)
+                .Select(x => new
+                {
+                    x.Id, x.VehicleId, x.VehicleModelMasterId, x.JobCardId,
+                    x.DocumentScope, x.DocumentType, x.FileName, x.Title,
+                    x.Manufacturer, x.VehicleType, x.ModelName, x.Revision,
+                    x.UploadedBy, x.UploadedAt, x.ExpiresAt, x.Status,
+                    hasFile = x.Content.Length > 0
+                })
+                .ToListAsync(ct)));
+
+    public static void MapDocumentUpload(this WebApplication app)
+    {
         app.MapPost("/api/documents/upload", async (HttpRequest request, AppDbContext db, CancellationToken ct) =>
         {
             if (!request.HasFormContentType)
