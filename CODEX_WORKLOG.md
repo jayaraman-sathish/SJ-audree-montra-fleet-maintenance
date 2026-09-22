@@ -430,3 +430,11 @@ Uploaded documents are currently stored and displayed. The next document-AI phas
 - Prepared a separate UI-only branch for the visual refresh so backend behavior remains isolated.
 - Refreshed the shell with a stronger enterprise navigation hierarchy, clearer active states, improved header/search styling, full-width content treatment, action-queue card styling and responsive layout rules.
 - UI changes must be merged only through a feature-branch pull request after backend build, frontend build and regression checks pass.
+
+
+## 2026-09-22 - UI review correction
+
+- Local production build completed successfully, but visual review showed the first UI pass was not acceptable.
+- Corrected the dashboard action queue so it uses responsive three-column/two-column/one-column layouts instead of five narrow columns.
+- Added bounded scrolling and ellipsis for long record identifiers so queue records remain readable and do not stretch the page.
+- Kept record links and backend bindings unchanged while correcting only the presentation layer.
