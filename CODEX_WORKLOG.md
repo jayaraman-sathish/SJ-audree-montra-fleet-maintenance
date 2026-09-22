@@ -438,3 +438,10 @@ Uploaded documents are currently stored and displayed. The next document-AI phas
 - Corrected the dashboard action queue so it uses responsive three-column/two-column/one-column layouts instead of five narrow columns.
 - Added bounded scrolling and ellipsis for long record identifiers so queue records remain readable and do not stretch the page.
 - Kept record links and backend bindings unchanged while correcting only the presentation layer.
+
+
+## 2026-09-22 - Frontend syntax regression corrected
+
+- The first dashboard style replacement introduced a missing Angular component metadata terminator.
+- The compile failure was identified from the local `TS1005: ',' expected` error and corrected in the feature branch.
+- The dashboard component metadata is now closed correctly; the frontend build must be rerun before merge.
