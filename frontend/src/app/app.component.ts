@@ -33,6 +33,43 @@ import {Router,NavigationEnd,RouterLink,RouterLinkActive,RouterOutlet} from '@an
 @media(max-width:600px){.shell .app-header{grid-template-columns:38px 1fr;padding:10px 14px;gap:8px 12px}.shell .header-search{grid-column:1/-1}.shell .app-header h1{font-size:16px}.shell .app-header p{display:none}}
 
 .shell .nav-group{display:flex;justify-content:space-between;align-items:center;width:100%;margin:8px 0 3px;padding:10px;border:0;border-radius:6px;background:#142f50;color:#fff;font-size:12px;font-weight:700;cursor:pointer;text-align:left;letter-spacing:.04em}.nav-links{display:grid;gap:2px}.nav-links[hidden]{display:none}.shell nav a{min-height:32px;padding:7px 10px}.nav-group:focus-visible{outline:2px solid #7dbaff}.nav-section{min-width:0}
+/* Enterprise fleet shell refresh */
+.shell{grid-template-columns:250px minmax(0,1fr);background:#eef3f8}
+.shell > aside{background:linear-gradient(180deg,#061a38 0%,#0a2a55 58%,#103d73 100%);padding:18px 14px;box-shadow:8px 0 26px rgba(7,27,58,.14)}
+.shell .brand{padding:0 8px 18px;border-bottom:1px solid rgba(255,255,255,.16);margin-bottom:14px}
+.shell .brand strong{letter-spacing:.14em;font-size:19px}
+.shell nav{gap:9px}.shell .nav-section{padding:0 2px}
+.shell .nav-group{margin:0 0 4px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(255,255,255,.09);color:#f7fbff;transition:.2s}
+.shell .nav-group:hover{background:rgba(92,169,255,.25);transform:translateX(2px)}
+.shell .nav-links{gap:3px;padding:2px 0 4px}
+.shell nav a{position:relative;min-height:35px;padding:8px 10px 8px 29px;border-radius:9px;color:#c9d9ed;transition:.2s}
+.shell nav a:before{content:"";position:absolute;left:13px;top:50%;width:5px;height:5px;border-radius:50%;background:#79a4d5;transform:translateY(-50%)}
+.shell nav a:hover{background:rgba(255,255,255,.11);color:#fff;transform:translateX(2px)}
+.shell nav a.active{background:linear-gradient(90deg,#2d7fe5,#1854a5);color:#fff;font-weight:700;box-shadow:0 5px 14px rgba(0,0,0,.18)}
+.shell nav a.active:before{width:7px;height:7px;background:#fff}
+.shell .version{color:#bdd0e8;border-top-color:rgba(255,255,255,.16);line-height:1.5}
+.shell main{background:transparent;min-width:0}
+.shell .app-header{min-height:78px;background:rgba(255,255,255,.97);border-bottom:1px solid #d7e3ef;box-shadow:0 4px 18px rgba(31,65,100,.08);padding:12px 28px}
+.shell .product h1{color:#102a43;letter-spacing:-.02em}.shell .product p{color:#60758b}
+.shell .menu-toggle{border-color:#d3e1ee;border-radius:10px;box-shadow:0 3px 10px rgba(22,61,101,.08)}
+.shell .header-search input{background:#f8fbff;border-color:#d2e0ed}
+.shell .header-search input:focus{outline:2px solid rgba(23,105,209,.2);border-color:#6da5e5}
+.shell .header-search button{background:linear-gradient(135deg,#1c74df,#1254ae);border-color:#1254ae}
+.shell .user{color:#17375d;line-height:1.35}
+.shell #fleet-page-content{min-height:calc(100vh - 78px);padding:22px 28px 42px}
+.shell #fleet-page-content .page{width:100%;max-width:none}
+.shell #fleet-page-content .title{margin-bottom:22px}.shell #fleet-page-content .title h2{font-size:26px;letter-spacing:-.025em;color:#102a43}.shell #fleet-page-content .title p{color:#60758b}
+.shell #fleet-page-content .card{border:1px solid #d9e5f0;border-radius:14px;box-shadow:0 8px 22px rgba(31,65,100,.07);background:#fff}
+.shell #fleet-page-content .kpis{gap:14px}.shell #fleet-page-content .kpi{position:relative;overflow:hidden;padding:18px;border-radius:14px}
+.shell #fleet-page-content .kpi:after{content:"";position:absolute;right:-28px;top:-28px;width:92px;height:92px;border-radius:50%;background:rgba(23,105,209,.08)}
+.shell #fleet-page-content .kpi strong{font-size:30px;color:#102a43}.shell #fleet-page-content .grid{gap:16px}
+.shell #fleet-page-content .section-head{padding-bottom:12px;border-bottom:1px solid #edf2f7}.shell #fleet-page-content .action-queue{grid-column:1/-1}
+.shell #fleet-page-content .action-grid{gap:12px}.shell #fleet-page-content .action-item{border:1px solid #f0c98e;border-radius:12px;background:linear-gradient(180deg,#fffaf2,#fff5e7);padding:14px}
+.shell #fleet-page-content .action-title b{color:#bd4e0b;font-size:26px}.shell #fleet-page-content .action-records a{display:block;padding:5px 0;color:#1769d1;font-size:12px;border-bottom:1px dashed #f0d7b4}
+.shell #fleet-page-content .summary-grid>div{border:1px solid #e1eaf3;border-radius:11px;background:#f8fbff;padding:14px}
+app-veerai{position:relative;z-index:35}
+@media(max-width:900px){.shell #fleet-page-content{padding:16px}.shell #fleet-page-content .title h2{font-size:22px}}
+
 `]})
 export class AppComponent{
  veeraiJobId='';globalQuery='';navigationOpen=false;navigationCollapsed=false;compactNavigation=window.innerWidth<=1100;
