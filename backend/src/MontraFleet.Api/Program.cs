@@ -935,12 +935,45 @@ app.MapGet("/api/dashboard/summary", async (AppDbContext db) =>
     var jobsAwaitingQcRelease = await db.QcInspections.CountAsync(x => x.Result == "Pending")
         + await db.VehicleReleases.CountAsync(x => x.ReleaseStatus == "Pending");
     var criticalFailedChecks = await db.ChecklistExecutions.CountAsync(x => x.IsMandatory && (x.Result == "Fail" || x.Result == "Failed"));
-    var activeServices=await (from e in db.ServiceEvents.AsNoTracking() join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id join j0 in db.JobCards.AsNoTracking() on e.Id equals j0.ServiceEventId into jj from j in jj.DefaultIfEmpty() where e.Status!="Closed"&&e.Status!="Cancelled" orderby e.OpenedAt descending select new{eventNumber=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.AssignedSupervisor,e.SupervisorAssignedAt,status=e.Status,openedAt=e.OpenedAt,jobCard=j!=null?j.JobCardNumber:"",technician=j!=null?j.Technician:"",bay=j!=null?j.Bay:""}).Take(8).ToListAsync();
+    var awaitingAssignmentRecords = await (from w in db.WorkItems.AsNoTracking()
+        join j in db.JobCards.AsNoTracking() on w.JobCardId equals j.Id
+        join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
+        join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
+        where w.Status != "Completed" && w.Status != "Cancelled" && !w.AssignedToTechnicianId.HasValue
+        orderby w.UpdatedAt descending
+        select new { id = w.Id, taskId = w.Id, jobCardId = j.Id, jobCard = j.JobCardNumber, vehicleId = v.Id, vehicle = v.RegistrationNumber, description = w.Description, status = w.Status }).Take(10).ToListAsync();
+    var blockedByPartsRecords = await (from p in db.PartRequests.AsNoTracking()
+        join j in db.JobCards.AsNoTracking() on p.JobCardId equals j.Id
+        join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
+        join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
+        where p.Status != "Issued" && p.Status != "Consumed" && p.Status != "Cancelled" && p.QuantityRequired > p.QuantityIssued
+        orderby p.UpdatedAt descending
+        select new { id = p.Id, partRequestId = p.Id, jobCardId = j.Id, jobCard = j.JobCardNumber, vehicleId = v.Id, vehicle = v.RegistrationNumber, requestNumber = p.RequestNumber, status = p.Status, quantityRequired = p.QuantityRequired, quantityIssued = p.QuantityIssued }).Take(10).ToListAsync();
+    var qcReleaseRecords = await (from q in db.QcInspections.AsNoTracking()
+        join j in db.JobCards.AsNoTracking() on q.JobCardId equals j.Id
+        join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
+        join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
+        where q.Result == "Pending"
+        orderby q.Id
+        select new { id = q.Id, qcInspectionId = q.Id, jobCardId = j.Id, jobCard = j.JobCardNumber, vehicleId = v.Id, vehicle = v.RegistrationNumber, status = q.Result }).Take(10).ToListAsync();
+    var failedCheckRecords = await (from c in db.ChecklistExecutions.AsNoTracking()
+        join j in db.JobCards.AsNoTracking() on c.JobCardId equals j.Id
+        join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id
+        join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id
+        where c.IsMandatory && (c.Result == "Fail" || c.Result == "Failed")
+        orderby c.ExecutedAt descending
+        select new { id = c.Id, checklistId = c.Id, jobCardId = j.Id, jobCard = j.JobCardNumber, vehicleId = v.Id, vehicle = v.RegistrationNumber, itemCode = c.ItemCode, itemText = c.ItemText, status = c.Result }).Take(10).ToListAsync();
+    var overduePmRecords = await (from p in db.PmObligations.AsNoTracking()
+        join v in db.Vehicles.AsNoTracking() on p.VehicleId equals v.Id
+        where p.Status == "Overdue"
+        orderby p.DueDate
+        select new { id = p.Id, pmObligationId = p.Id, vehicleId = v.Id, vehicle = v.RegistrationNumber, planCode = p.PlanCode, dueDate = p.DueDate, status = p.Status }).Take(10).ToListAsync();
+        var activeServices=await (from e in db.ServiceEvents.AsNoTracking() join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id join j0 in db.JobCards.AsNoTracking() on e.Id equals j0.ServiceEventId into jj from j in jj.DefaultIfEmpty() where e.Status!="Closed"&&e.Status!="Cancelled" orderby e.OpenedAt descending select new{eventNumber=e.EventNumber,vehicle=v.RegistrationNumber,type=e.EventType,e.AssignedSupervisor,e.SupervisorAssignedAt,status=e.Status,openedAt=e.OpenedAt,jobCard=j!=null?j.JobCardNumber:"",technician=j!=null?j.Technician:"",bay=j!=null?j.Bay:""}).Take(8).ToListAsync();
     var openTasks=await db.WorkItems.CountAsync(x=>x.Status!="Completed"&&x.Status!="Cancelled");
     var unassignedTasks=await db.WorkItems.CountAsync(x=>x.Status!="Completed"&&x.Status!="Cancelled"&&!x.AssignedToTechnicianId.HasValue);
     var dueSoon=await db.PmObligations.CountAsync(x=>x.Status=="Due"||x.Status=="Due Soon");
     var recentBreakdowns=await (from b in db.Breakdowns.AsNoTracking() join v in db.Vehicles.AsNoTracking() on b.VehicleId equals v.Id where b.Status!="Closed"&&b.Status!="Restored"&&b.Status!="Cancelled" orderby b.ReportedAt descending select new{breakdownNumber=b.BreakdownNumber,vehicle=v.RegistrationNumber,complaint=b.Complaint,status=b.Status,reportedAt=b.ReportedAt,location=b.Location}).Take(8).ToListAsync();
-    return Results.Ok(new { totalVehicles=total, available, inService, underMaintenance=maintenance, breakdown=breakdowns, breakdownRequests=breakdowns, offHire, appointmentsToday=appointments, pmOverdue, dueSoon, openTasks, unassignedJobs=unassignedTasks, unassignedTasks, jobsAwaitingAssignment, jobsBlockedByParts, jobsAwaitingQcRelease, criticalFailedChecks, slaBreaches=await ControlEndpoints.BreachCountAsync(db), firstTimeFix=(await ControlEndpoints.QualityAsync(db,DateTime.UtcNow.AddDays(-90),DateTime.UtcNow,null,null,null)).FirstTimeFix, uptime30d=await ControlEndpoints.UptimeAsync(db,DateTime.UtcNow.AddDays(-30),DateTime.UtcNow), activeServices, recentBreakdowns });
+    return Results.Ok(new { totalVehicles=total, available, inService, underMaintenance=maintenance, breakdown=breakdowns, breakdownRequests=breakdowns, offHire, appointmentsToday=appointments, pmOverdue, dueSoon, openTasks, unassignedJobs=unassignedTasks, unassignedTasks, jobsAwaitingAssignment, jobsBlockedByParts, jobsAwaitingQcRelease, criticalFailedChecks, slaBreaches=await ControlEndpoints.BreachCountAsync(db), firstTimeFix=(await ControlEndpoints.QualityAsync(db,DateTime.UtcNow.AddDays(-90),DateTime.UtcNow,null,null,null)).FirstTimeFix, uptime30d=await ControlEndpoints.UptimeAsync(db,DateTime.UtcNow.AddDays(-30),DateTime.UtcNow), activeServices, recentBreakdowns, awaitingAssignmentRecords, blockedByPartsRecords, qcReleaseRecords, failedCheckRecords, overduePmRecords });
 });
 
 app.MapGet("/api/vehicles", async (AppDbContext db) =>
