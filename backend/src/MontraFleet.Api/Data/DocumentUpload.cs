@@ -36,7 +36,7 @@ public static class DocumentUpload
             if (files.Any(file => file.Length > maxBytes))
                 return Results.BadRequest(new { message = "The document must be 10 MB or smaller." });
 
-            if (files.Any(file => !(file.ContentType ?? "").ToLowerInvariant() is "application/pdf" or "image/png" or "image/jpeg"))
+            if (files.Any(file => !new[] { "application/pdf", "image/png", "image/jpeg" }.Contains((file.ContentType ?? "").ToLowerInvariant())))
                 return Results.BadRequest(new { message = "Only PDF, PNG and JPEG files are supported." });
 
             var scope = form["documentScope"].FirstOrDefault() ?? "Customer";
@@ -112,7 +112,7 @@ public static class DocumentUpload
             if (files.Count > 0)
             {
                 if (files.Any(file => file.Length > maxBytes)) return Results.BadRequest(new { message = "Each document must be 10 MB or smaller." });
-                if (files.Any(file => !(file.ContentType ?? "").ToLowerInvariant() is "application/pdf" or "image/png" or "image/jpeg"))
+                if (files.Any(file => !new[] { "application/pdf", "image/png", "image/jpeg" }.Contains((file.ContentType ?? "").ToLowerInvariant())))
                     return Results.BadRequest(new { message = "Only PDF, PNG and JPEG files are supported." });
                 document.Content = Array.Empty<byte>(); document.FileName = ""; document.ContentType = "application/octet-stream";
                 var old = await db.DocumentAttachments.Where(a => a.VehicleDocumentId == id && a.IsActive).ToListAsync(ct); foreach (var a in old) a.IsActive = false;
