@@ -21,6 +21,12 @@ describe('Customer and manufacturer documents',()=>{
     cy.request(d.fileUrl).its('body').should('include','isolated upload fixture');
    });
    cy.reload();cy.contains('button','Manufacturer Documents').click();cy.contains('td',title).should('be.visible');
+   cy.contains('td',title).parent('tr').within(()=>{cy.contains('button','Edit').click()});
+   cy.contains('h3','Edit document').should('be.visible');
+   cy.contains('label','Document title').find('input').clear().type(`${title} updated`);
+   cy.get('input[type=file]').selectFile({contents:Cypress.Buffer.from('%PDF-1.4\n% replacement attachment\n%%EOF'),fileName:'manual-replacement.pdf',mimeType:'application/pdf'});
+   cy.contains('button','Save').click();
+   cy.contains('td',`${title} updated`).should('be.visible');
    cy.contains('button','Customer Documents').click();cy.contains('td',title).should('not.exist');
    cy.contains('button','Upload Document').click();cy.get('.editor').contains('label','Vehicle').should('be.visible');
   });
