@@ -418,3 +418,15 @@ Uploaded documents are currently stored and displayed. The next document-AI phas
 - Added repository `global.json` to pin backend builds to .NET SDK 8.0.425 instead of selecting .NET 10 automatically.
 - Kept Angular CLI as a local dependency and added `npm run build:clean` for a repeatable `npm ci` plus production build.
 - Removed the existing Angular NG8107 optional-chain warning in the PM program matrix template.
+
+
+## 2026-09-22 - Maintenance action queue and UI refresh
+
+- Added API-backed maintenance action queue counts for jobs awaiting assignment, jobs blocked by parts, jobs awaiting QC/release, critical failed checks and overdue PM.
+- Added record-level identifiers to the action queue so users can trace each item to its task, Job Card, vehicle, part request or PM obligation.
+- Added dashboard links that route users to the relevant operational screen with source identifiers in the query string.
+- Confirmed the backend and Angular builds passed after the action-queue implementation.
+- Identified the production UI issue: the shell had a plain navigation hierarchy, excessive unused space, flat cards and a floating Veerai panel that could cover dashboard content.
+- Prepared a separate UI-only branch for the visual refresh so backend behavior remains isolated.
+- Refreshed the shell with a stronger enterprise navigation hierarchy, clearer active states, improved header/search styling, full-width content treatment, action-queue card styling and responsive layout rules.
+- UI changes must be merged only through a feature-branch pull request after backend build, frontend build and regression checks pass.
