@@ -50,3 +50,8 @@ The dashboard shell looked unfinished because the sidebar hierarchy was visually
 4. Manual check of desktop and mobile sidebar behavior
 5. Manual check that Veerai does not hide queue records or form controls
 6. Verify no direct commit is made to main; merge only the reviewed pull request
+
+
+## UI refresh review outcome
+
+The first shell redesign passed compilation but failed visual acceptance in local review. The corrective action is to restore the previous shell styling while retaining the backend metrics and record traceability. Future visual work must be isolated, locally reviewed at desktop and mobile widths, and merged only after acceptance.

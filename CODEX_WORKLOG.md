@@ -430,3 +430,11 @@ Uploaded documents are currently stored and displayed. The next document-AI phas
 - Prepared a separate UI-only branch for the visual refresh so backend behavior remains isolated.
 - Refreshed the shell with a stronger enterprise navigation hierarchy, clearer active states, improved header/search styling, full-width content treatment, action-queue card styling and responsive layout rules.
 - UI changes must be merged only through a feature-branch pull request after backend build, frontend build and regression checks pass.
+
+
+## 2026-09-22 - UI refresh review outcome
+
+- Local visual review found the merged shell refresh was not acceptable: it introduced excessive empty space, weak dashboard proportions and a less usable action-queue presentation.
+- Opened PR #91 to restore the original shell/sidebar/header styling.
+- The restoration intentionally preserves the backend action-queue APIs, record identifiers, dashboard bindings and document fixes.
+- A future UI redesign must be prototyped and visually reviewed locally before merge.
