@@ -16,7 +16,12 @@ public static class DocumentUpload
                     x.DocumentScope, x.DocumentType, x.FileName, x.Title,
                     x.Manufacturer, x.VehicleType, x.ModelName, x.Revision,
                     x.StorageReference, x.UploadedBy, x.UploadedAt, x.ExpiresAt, x.Status,
+ feature/v1.8.26
+                    hasFile = x.Content.Length > 0 || db.DocumentAttachments.Any(a => a.VehicleDocumentId == x.Id && a.IsActive),
+                    attachments = db.DocumentAttachments.AsNoTracking().Where(a => a.VehicleDocumentId == x.Id && a.IsActive).OrderByDescending(a => a.UploadedAt).Select(a => new { a.Id, a.FileName, a.ContentType, a.UploadedAt, fileUrl = "/api/documents/" + x.Id + "/attachments/" + a.Id + "" }).ToList(),
+
                     hasFile = x.Content.Length > 0,
+ main
                     fileUrl = "/api/documents/" + x.Id + "/file"
                 })
                 .ToListAsync(ct)));
@@ -27,6 +32,17 @@ public static class DocumentUpload
                 return Results.BadRequest(new { message = "Upload the document as multipart form data." });
 
             var form = await request.ReadFormAsync(ct);
+ feature/v1.8.26
+            var files = form.Files.GetFiles("files").Concat(form.Files.GetFiles("file")).Where(x => x.Length > 0).ToList();
+            if (files.Count == 0)
+                return Results.BadRequest(new { message = "Choose a document file." });
+
+            const long maxBytes = 10L * 1024 * 1024;
+            if (files.Any(file => file.Length > maxBytes))
+                return Results.BadRequest(new { message = "The document must be 10 MB or smaller." });
+
+            if (files.Any(file => !new[] { "application/pdf", "image/png", "image/jpeg" }.Contains((file.ContentType ?? "").ToLowerInvariant())))
+
             var file = form.Files.GetFile("file");
             if (file is null || file.Length == 0)
                 return Results.BadRequest(new { message = "Choose a document file." });
@@ -38,6 +54,7 @@ public static class DocumentUpload
             var contentType = (file.ContentType ?? "").ToLowerInvariant();
             var allowed = contentType is "application/pdf" or "image/png" or "image/jpeg";
             if (!allowed)
+ main
                 return Results.BadRequest(new { message = "Only PDF, PNG and JPEG files are supported." });
 
             var scope = form["documentScope"].FirstOrDefault() ?? "Customer";
@@ -60,9 +77,14 @@ public static class DocumentUpload
             if (jobCardId.HasValue && !await db.JobCards.AsNoTracking().AnyAsync(x => x.Id == jobCardId.Value, ct))
                 return Results.BadRequest(new { message = "The selected Job Card was not found." });
 
+ feature/v1.8.26
+            var first = files[0];
+            await using var stream = first.OpenReadStream(); using var buffer = new MemoryStream(); await stream.CopyToAsync(buffer, ct);
+
             await using var stream = file.OpenReadStream();
             using var buffer = new MemoryStream();
             await stream.CopyToAsync(buffer, ct);
+ main
 
             var document = new VehicleDocument
             {
@@ -75,10 +97,16 @@ public static class DocumentUpload
                 VehicleType = form["vehicleType"].FirstOrDefault() ?? "",
                 ModelName = form["modelName"].FirstOrDefault() ?? "",
                 Revision = form["revision"].FirstOrDefault() ?? "",
+ feature/v1.8.26
+                Title = form["title"].FirstOrDefault() ?? Path.GetFileNameWithoutExtension(first.FileName),
+                ExpiresAt = DateTime.TryParse(form["expiresAt"].FirstOrDefault(), out var expires) ? expires.ToUniversalTime() : null,
+                FileName = Path.GetFileName(first.FileName), ContentType = (first.ContentType ?? "").ToLowerInvariant(),
+
                 Title = form["title"].FirstOrDefault() ?? Path.GetFileNameWithoutExtension(file.FileName),
                 ExpiresAt = DateTime.TryParse(form["expiresAt"].FirstOrDefault(), out var expires) ? expires.ToUniversalTime() : null,
                 FileName = Path.GetFileName(file.FileName),
                 ContentType = contentType,
+ main
                 Content = buffer.ToArray(),
                 StorageReference = "database",
                 UploadedBy = form["user"].FirstOrDefault() ?? "Service User",
@@ -89,6 +117,10 @@ public static class DocumentUpload
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             db.VehicleDocuments.Add(document);
             await db.SaveChangesAsync(ct);
+ feature/v1.8.26
+            foreach (var attachmentFile in files.Skip(1)) { using var attachmentBuffer = new MemoryStream(); await attachmentFile.CopyToAsync(attachmentBuffer, ct); db.DocumentAttachments.Add(new DocumentAttachment { VehicleDocumentId = document.Id, FileName = Path.GetFileName(attachmentFile.FileName), ContentType = (attachmentFile.ContentType ?? "").ToLowerInvariant(), Content = attachmentBuffer.ToArray(), UploadedBy = document.UploadedBy }); }
+
+ main
             await tx.CommitAsync(ct);
 
             return Results.Ok(new
@@ -109,6 +141,18 @@ public static class DocumentUpload
             if (document is null) return Results.NotFound(new { message = "The document was not found." });
 
             var form = await request.ReadFormAsync(ct);
+ feature/v1.8.26
+            var files = form.Files.GetFiles("files").Concat(form.Files.GetFiles("file")).Where(x => x.Length > 0).ToList();
+            const long maxBytes = 10L * 1024 * 1024;
+            if (files.Count > 0)
+            {
+                if (files.Any(file => file.Length > maxBytes)) return Results.BadRequest(new { message = "Each document must be 10 MB or smaller." });
+                if (files.Any(file => !new[] { "application/pdf", "image/png", "image/jpeg" }.Contains((file.ContentType ?? "").ToLowerInvariant())))
+                    return Results.BadRequest(new { message = "Only PDF, PNG and JPEG files are supported." });
+                document.Content = Array.Empty<byte>(); document.FileName = ""; document.ContentType = "application/octet-stream";
+                var old = await db.DocumentAttachments.Where(a => a.VehicleDocumentId == id && a.IsActive).ToListAsync(ct); foreach (var a in old) a.IsActive = false;
+                foreach (var upload in files) { using var buffer = new MemoryStream(); await upload.CopyToAsync(buffer, ct); db.DocumentAttachments.Add(new DocumentAttachment { VehicleDocumentId = id, FileName = Path.GetFileName(upload.FileName), ContentType = (upload.ContentType ?? "").ToLowerInvariant(), Content = buffer.ToArray(), UploadedBy = form["user"].FirstOrDefault() ?? document.UploadedBy }); }
+
             var file = form.Files.GetFile("file");
             const long maxBytes = 10L * 1024 * 1024;
             if (file is not null)
@@ -125,6 +169,7 @@ public static class DocumentUpload
                 document.FileName = Path.GetFileName(file.FileName);
                 document.ContentType = replacementType;
                 document.Content = buffer.ToArray();
+ main
                 document.StorageReference = "database";
             }
 
@@ -161,5 +206,10 @@ public static class DocumentUpload
             await db.SaveChangesAsync(ct);
             return Results.Ok(new { saved = true, id = document.Id, fileName = document.FileName, message = "Document updated successfully." });
         });
+ feature/v1.8.26
+
+        app.MapGet("/api/documents/{id:guid}/attachments/{attachmentId:guid}", async (Guid id, Guid attachmentId, AppDbContext db, bool? download) => { var a = await db.DocumentAttachments.AsNoTracking().FirstOrDefaultAsync(x => x.VehicleDocumentId == id && x.Id == attachmentId && x.IsActive); return a is null ? Results.NotFound() : Results.File(a.Content, a.ContentType, download == true ? a.FileName : null); });
+
+ main
     }
 }

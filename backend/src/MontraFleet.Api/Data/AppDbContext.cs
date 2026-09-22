@@ -58,6 +58,7 @@ public partial class AppDbContext(DbContextOptions<AppDbContext> options) : DbCo
     public DbSet<Campaign> Campaigns => Set<Campaign>();
     public DbSet<VehicleCampaign> VehicleCampaigns => Set<VehicleCampaign>();
     public DbSet<VehicleDocument> VehicleDocuments => Set<VehicleDocument>();
+    public DbSet<DocumentAttachment> DocumentAttachments => Set<DocumentAttachment>();
     public DbSet<IntegrationOutbox> IntegrationOutbox => Set<IntegrationOutbox>();
     public DbSet<MaintenanceRequest> MaintenanceRequests => Set<MaintenanceRequest>();
     public DbSet<ServiceTaskMaster> ServiceTaskMasters => Set<ServiceTaskMaster>();
@@ -140,6 +141,7 @@ public partial class AppDbContext(DbContextOptions<AppDbContext> options) : DbCo
         m.Entity<Campaign>().HasIndex(x => x.CampaignCode).IsUnique();
         m.Entity<VehicleCampaign>().HasIndex(x => new { x.VehicleId, x.CampaignId }).IsUnique();
         m.Entity<VehicleDocument>().HasIndex(x => new { x.VehicleId, x.DocumentType, x.UploadedAt });
+        m.Entity<DocumentAttachment>().HasIndex(x => new { x.VehicleDocumentId, x.UploadedAt });
         m.Entity<IntegrationOutbox>().HasIndex(x => new { x.Status, x.CreatedAt });
         m.Entity<MaintenanceRequest>().HasIndex(x => x.RequestNumber).IsUnique();
         m.Entity<MaintenanceRequest>().HasIndex(x => new { x.VehicleId, x.Status });

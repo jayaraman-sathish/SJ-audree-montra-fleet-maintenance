@@ -84,6 +84,8 @@ using (var scope = app.Services.CreateScope())
       ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "ExpiresAt" timestamptz NULL;
       ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "Content" bytea NOT NULL DEFAULT ''::bytea;
       ALTER TABLE "VehicleDocuments" ADD COLUMN IF NOT EXISTS "ContentType" text NOT NULL DEFAULT 'application/octet-stream';
+      CREATE TABLE IF NOT EXISTS "DocumentAttachments" ("Id" uuid PRIMARY KEY, "VehicleDocumentId" uuid NOT NULL, "FileName" text NOT NULL, "ContentType" text NOT NULL, "Content" bytea NOT NULL, "UploadedBy" text NOT NULL, "UploadedAt" timestamptz NOT NULL, "IsActive" boolean NOT NULL DEFAULT true);
+      CREATE INDEX IF NOT EXISTS "IX_DocumentAttachments_VehicleDocumentId_UploadedAt" ON "DocumentAttachments" ("VehicleDocumentId", "UploadedAt");
       CREATE TABLE IF NOT EXISTS "WarrantyClaims" ("Id" uuid PRIMARY KEY,"WarrantyEntitlementId" uuid NOT NULL,"JobCardId" uuid NOT NULL,"PartRequestId" uuid NULL,"ClaimNumber" text NOT NULL,"Description" text NOT NULL,"Amount" numeric NOT NULL,"Status" text NOT NULL,"CreatedBy" text NOT NULL,"CreatedAt" timestamptz NOT NULL,"DecisionBy" text NOT NULL,"DecisionRemarks" text NOT NULL,"DecidedAt" timestamptz NULL);
     """);
     await db.Database.ExecuteSqlRawAsync("""
