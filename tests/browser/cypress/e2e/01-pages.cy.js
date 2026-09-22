@@ -11,3 +11,17 @@ describe('All operational pages on the isolated application',()=>{
   cy.then(()=>expect(errors,'API server errors').to.deep.equal([]));
  });
 });
+
+describe('Fleet status dashboard',()=>{
+ it('shows the six fleet status cards from the dashboard summary',()=>{
+  cy.intercept('GET','/api/dashboard/summary').as('dashboardSummary');
+  cy.visit('/');
+  cy.wait('@dashboardSummary').its('response.statusCode').should('eq',200);
+  cy.get('.kpis').should('contain.text','Available')
+   .and('contain.text','In service')
+   .and('contain.text','Breakdown')
+   .and('contain.text','Off-hire')
+   .and('contain.text','PM overdue')
+   .and('contain.text','Unassigned jobs');
+ });
+});

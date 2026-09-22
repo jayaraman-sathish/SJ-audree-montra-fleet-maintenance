@@ -3,7 +3,8 @@
   "version": "1.8.25",
   "scripts": {
     "start": "ng serve",
-    "build": "ng build"
+    "build": "ng build",
+    "build:clean": "npm ci && ng build"
   },
   "dependencies": {
     "@angular/animations": "^18.2.0",

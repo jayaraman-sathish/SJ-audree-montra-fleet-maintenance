@@ -19,7 +19,7 @@
   <div class="context" *ngIf="selectedProgram && !loadingMatrix">
     <span><small>Vehicle model</small><b>{{programModelName}}</b></span>
     <span><small>Variant scope</small><b>{{variantScopeLabel}}</b></span>
-    <span><small>Program status</small><b>{{selectedProgram?.isActive?'Active':'Inactive'}}</b></span>
+    <span><small>Program status</small><b>{{selectedProgram.isActive?'Active':'Inactive'}}</b></span>
     <span><small>Saved service levels</small><b>{{hasSavedLevels ? levels.length : 0}}</b></span>
   </div>
   <p *ngIf="loadingPrograms || loadingMatrix" role="status">Loading the selected program...</p>
