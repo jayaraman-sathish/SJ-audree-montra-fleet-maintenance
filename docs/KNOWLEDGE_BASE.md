@@ -55,3 +55,8 @@ The dashboard shell looked unfinished because the sidebar hierarchy was visually
 ## UI review correction
 
 The first visual refresh passed compilation but failed visual acceptance because five action-queue cards compressed long identifiers into narrow columns. The corrective rule is: use a responsive card grid, preserve readable labels and counts, bound record lists with scrolling, and truncate only the visual text while retaining the full query parameters in the link.
+
+
+## Build regression correction
+
+A visual-only dashboard edit caused a TypeScript parser error because the Angular component metadata closing token was lost during replacement. The fix was limited to restoring the component metadata terminator. Always run `npm run build` after inline-template or inline-style edits before merging.
