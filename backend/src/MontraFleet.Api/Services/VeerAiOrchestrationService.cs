@@ -38,7 +38,7 @@ public sealed class VeerAiOrchestrationService : IVeerAiOrchestrationService
         if (sources is null)
             return null;
 
-        if (Veerai.Json.Serialize(sources).Length > 100000)
+        if (System.Text.Json.JsonSerializer.Serialize(sources, Veerai.Json).Length > 100000)
             throw new InvalidOperationException("The job evidence is too large for one analysis.");
 
         var analysis = await Veerai.Analyse(
