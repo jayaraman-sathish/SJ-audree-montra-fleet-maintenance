@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using MontraFleet.Api.Data;
 using MontraFleet.Api.Models;
+using MontraFleet.Api.Services;
 using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -11,6 +12,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddDataProtection();
 builder.Services.AddHttpClient("veerai", c=>c.Timeout=TimeSpan.FromSeconds(90));
+builder.Services.AddScoped<IVeerAiOrchestrationService, VeerAiOrchestrationService>();
 builder.Services.AddRateLimiter(o=> { o.RejectionStatusCode=429; o.AddFixedWindowLimiter("veerai", l=> { l.PermitLimit=6; l.Window=TimeSpan.FromMinutes(1); l.QueueLimit=0; }); });
 
 var rawConnection =
