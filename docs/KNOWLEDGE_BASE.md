@@ -125,3 +125,25 @@ Each response must contain a concise answer plus source identifiers where eviden
 - Unsupported question: return a clear scope refusal.
 
 The service must be independently testable with provider fixtures. Production merge requires backend build, Angular build, API authorization tests, read-only tests, response-citation tests and browser validation of the working VeerAI screen.
+
+
+## Module access enforcement
+
+Every VeerAI chat request must identify the requested data area before evidence retrieval. The backend checks the matching `AI_READ_ACCESS` module setting first.
+
+| Module | Configuration code | Disabled behavior |
+|---|---|---|
+| Vehicles | `vehicles` | No access response; no vehicle evidence |
+| Job Cards | `job-cards` | No job context, pending-job list or job evidence |
+| Service Events | `service-events` | No service-event evidence |
+| Breakdowns | `breakdowns` | No breakdown evidence |
+| Appointments | `appointments` | No appointment/capacity evidence |
+| Preventive Maintenance | `pm` | No PM evidence |
+| Parts and Inventory | `parts` | No stock/part evidence |
+| Technicians | `technicians` | No technician evidence |
+| Documents and Evidence | `documents` | No document evidence |
+| Audit Records | `audit` | No audit evidence |
+
+When a module is disabled, the API returns a clear message such as **“No access to Parts and Inventory data is enabled for VeerAI.”** It must not query the underlying records and must not send that data to the AI provider.
+
+The same check applies to shortcut paths such as pending-work queries; they must not bypass the orchestration permission boundary.
