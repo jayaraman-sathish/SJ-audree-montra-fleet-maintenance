@@ -1,3 +1,4 @@
+using MontraFleet.Api.Services;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -112,18 +113,41 @@ Each key is an array of at most 8 objects {"text":"...", "sources":["S1"]}. Ever
     public static void MapVeeraiEndpoints(this WebApplication app)
     {
         app.MapGet("/api/veerai/status",(IConfiguration c)=>Results.Ok(new {available=Configured(c)}));
-        app.MapPost("/api/job-cards/{id:guid}/veerai/analyse",async (Guid id, VeerQuestion input, HttpContext context, AppDbContext db,IConfiguration c,IHttpClientFactory clients,CancellationToken ct)=>{
-            if(!Configured(c)) return Results.Json(new {message="Veerai is not connected. Ask your administrator to configure AI access."},statusCode:503);
-            if(!Authorized(context.Request.Headers["X-Veerai-Access"].ToString(),c["Veerai:AccessKey"])) return Results.Json(new {message="Enter a valid Veerai access key."},statusCode:401);
-            if(string.IsNullOrWhiteSpace(input.Question)||input.Question.Length>1500) return Results.BadRequest(new {message="Enter a question up to 1500 characters."});
-            var sources=await Sources(db,id,ct);
-            if(sources is null) return Results.NotFound(new {message="Job Card not found."});
-            if(JsonSerializer.Serialize(sources,Json).Length>100000) return Results.BadRequest(new {message="This job has too much evidence for one analysis. Review the job records directly."});
-            try {
-                var analysis=await Analyse(clients.CreateClient("veerai"),c["Veerai:ApiKey"]!,c["Veerai:Model"]!,input.Question,sources,ct);
-                return Results.Ok(new {analysis,sources,analysedAt=DateTime.UtcNow,model=c["Veerai:Model"],notice="AI advisory draft. Check evidence and approved procedures. No service records changed. Reanalyse after recording new work."});
-            } catch(Exception e) when(e is HttpRequestException or JsonException or TaskCanceledException or KeyNotFoundException or InvalidOperationException) {
-                return Results.Json(new {message="Veerai could not produce a complete, evidence-linked analysis. Retry later; your job records have not changed."},statusCode:502);
+        app.MapPost("/api/job-cards/{id:guid}/veerai/analyse", async (Guid id, VeerQuestion input, HttpContext context, IConfiguration configuration, IVeerAiOrchestrationService orchestration, CancellationToken ct) =>
+        {
+            if (!Configured(configuration))
+                return Results.Json(new { message = "Veerai is not connected. Ask your administrator to configure AI access." }, statusCode: 503);
+            if (!Authorized(context.Request.Headers["X-Veerai-Access"].ToString(), configuration["Veerai:AccessKey"]))
+                return Results.Json(new { message = "Enter a valid Veerai access key." }, statusCode: 401);
+            if (string.IsNullOrWhiteSpace(input.Question) || input.Question.Length > 1500)
+                return Results.BadRequest(new { message = "Enter a question up to 1500 characters." });
+
+            try
+            {
+                var result = await orchestration.AnalyseJobAsync(id, input.Question, ct);
+                if (result is null)
+                    return Results.NotFound(new { message = "Job Card not found." });
+
+                return Results.Ok(new
+                {
+                    analysis = result.Analysis,
+                    sources = result.Sources,
+                    analysedAt = result.AnalysedAt,
+                    model = result.Model,
+                    notice = result.Notice
+                });
+            }
+            catch (ArgumentException e)
+            {
+                return Results.BadRequest(new { message = e.Message });
+            }
+            catch (InvalidOperationException e)
+            {
+                return Results.Json(new { message = e.Message }, statusCode: 503);
+            }
+            catch (Exception e) when (e is HttpRequestException or JsonException or TaskCanceledException or KeyNotFoundException)
+            {
+                return Results.Json(new { message = "Veerai could not produce a complete, evidence-linked analysis. Retry later; your job records have not changed." }, statusCode: 502);
             }
         }).RequireRateLimiting("veerai");
     }
