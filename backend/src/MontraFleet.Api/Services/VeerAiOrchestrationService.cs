@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using MontraFleet.Api.Data;
 
 namespace MontraFleet.Api.Services;
@@ -23,33 +25,63 @@ public sealed class VeerAiOrchestrationService : IVeerAiOrchestrationService
         Guid? currentJobId,
         CancellationToken cancellationToken = default)
     {
-        // Do not read or resolve Job Cards when disabled.
-        if (!AiConfiguration.IsEnabled(_db, "job-cards"))
-        {
-            return new VeerChatContext(
-                null,
-                "General Montra guidance",
-                null,
-                Array.Empty<VeerChatChoice>());
-        }
+        var access = VeerAiAccessPolicy.Check(_db, ["job-cards"]);
+        if (!access.Allowed)
+            return new(null, "Access controlled", access.Message, []);
 
-        return await VeeraiChat.Resolve(
-            _db,
-            question,
-            currentJobId,
-            cancellationToken);
+        return await VeeraiChat.Resolve(_db, question, currentJobId, cancellationToken);
     }
 
     public async Task<List<VeerSource>> GetEvidenceAsync(
         Guid jobCardId,
         CancellationToken cancellationToken = default)
     {
-        // Enforce the module permission at the orchestration boundary.
-        if (!AiConfiguration.IsEnabled(_db, "job-cards"))
-            return new List<VeerSource>();
+        var access = VeerAiAccessPolicy.Check(_db, ["job-cards"]);
+        if (!access.Allowed)
+            return [];
 
-        return await Veerai.Sources(_db, jobCardId, cancellationToken)
-            ?? new List<VeerSource>();
+        return await Veerai.Sources(_db, jobCardId, cancellationToken) ?? [];
+    }
+
+    public async Task<List<VeerSource>> GetVehicleEvidenceAsync(
+        Guid vehicleId,
+        CancellationToken cancellationToken = default)
+    {
+        var access = VeerAiAccessPolicy.Check(_db, ["vehicles"]);
+        if (!access.Allowed)
+            return [];
+
+        var vehicle = await _db.Vehicles.AsNoTracking()
+            .Where(x => x.Id == vehicleId)
+            .Select(x => new
+            {
+                x.Id,
+                x.Vin,
+                x.RegistrationNumber,
+                x.Model,
+                x.Variant,
+                x.Status,
+                x.DepotCode,
+                x.ServiceCentreCode,
+                x.OdometerKm,
+                x.OperatingHours,
+                x.EnergyKwh,
+                x.BatterySoc,
+                x.IsActive
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (vehicle is null)
+            return [];
+
+        return
+        [
+            new VeerSource(
+                "vehicle-1",
+                "Vehicle enrollment and current status",
+                $"/vehicle-360/{vehicle.Id}",
+                JsonSerializer.Serialize(vehicle, Veerai.Json))
+        ];
     }
 
     public async Task<VeerAiOrchestrationResult?> AnalyseJobAsync(
@@ -57,39 +89,28 @@ public sealed class VeerAiOrchestrationService : IVeerAiOrchestrationService
         string question,
         CancellationToken cancellationToken = default)
     {
-        if (!AiConfiguration.IsEnabled(_db, "job-cards"))
-            throw new InvalidOperationException(
-                "Job Card access is disabled for VeerAI.");
-
         if (!Veerai.Configured(_configuration))
             throw new InvalidOperationException("VeerAI is not configured.");
 
+        var access = VeerAiAccessPolicy.Check(_db, ["job-cards"]);
+        if (!access.Allowed)
+            throw new UnauthorizedAccessException(access.Message);
+
         if (string.IsNullOrWhiteSpace(question) || question.Length > 1500)
-            throw new ArgumentException(
-                "Enter a question up to 1500 characters.",
-                nameof(question));
+            throw new ArgumentException("Enter a question up to 1500 characters.", nameof(question));
 
-        var sources = await Veerai.Sources(
-            _db,
-            jobCardId,
-            cancellationToken);
-
+        // Evidence collection is deliberately bounded and read-only.
+        var sources = await Veerai.Sources(_db, jobCardId, cancellationToken);
         if (sources is null)
             return null;
 
-        if (System.Text.Json.JsonSerializer.Serialize(
-                sources,
-                Veerai.Json).Length > 100000)
-        {
-            throw new InvalidOperationException(
-                "The job evidence is too large for one analysis.");
-        }
+        if (JsonSerializer.Serialize(sources, Veerai.Json).Length > 100000)
+            throw new InvalidOperationException("The job evidence is too large for one analysis.");
 
-        var model = _configuration["Veerai:Model"]!;
         var analysis = await Veerai.Analyse(
             _httpClientFactory.CreateClient("veerai"),
             _configuration["Veerai:ApiKey"]!,
-            model,
+            _configuration["Veerai:Model"]!,
             question,
             sources,
             cancellationToken);
@@ -98,7 +119,7 @@ public sealed class VeerAiOrchestrationService : IVeerAiOrchestrationService
             analysis,
             sources,
             DateTime.UtcNow,
-            model,
+            _configuration["Veerai:Model"]!,
             "AI advisory draft. Check evidence and approved procedures. No service records changed.");
     }
 }
