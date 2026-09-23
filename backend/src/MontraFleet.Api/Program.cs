@@ -57,6 +57,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseRateLimiter();
 AiConfiguration.Map(app);
+VeeraiApiCatalog.Map(app);
 DocumentUpload.MapDocumentUpload(app);
 
 using (var scope = app.Services.CreateScope())
