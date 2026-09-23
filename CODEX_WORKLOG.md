@@ -438,3 +438,13 @@ Uploaded documents are currently stored and displayed. The next document-AI phas
 - Opened PR #91 to restore the original shell/sidebar/header styling.
 - The restoration intentionally preserves the backend action-queue APIs, record identifiers, dashboard bindings and document fixes.
 - A future UI redesign must be prototyped and visually reviewed locally before merge.
+
+
+## 2026-09-23 - Secure VeerAI API workspace
+
+- Created isolated branch `feature/secure-veerai-api-workspace`; no production or `main` branch changes are used during implementation.
+- Confirmed Angular VeerAI calls backend endpoints only; it does not connect to PostgreSQL or execute SQL.
+- Kept VeerAI read-only: data access is controlled by backend API authorization and the AI read-access configuration.
+- Strengthened configuration validation so a save must include every approved data area exactly once; partial or duplicate payloads are rejected instead of silently changing defaults.
+- The working screen must provide API-backed chat, vehicle/Job Card context, evidence/source records, safe error handling and refusal when approved data is unavailable.
+- Required validation before PR: .NET Release build, Angular production build, API authorization/configuration checks, read-only behavior and browser review of the AI Configuration screen.
