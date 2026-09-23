@@ -35,48 +35,104 @@ Provider HTTP errors distinguish credentials, quota, model/request rejection, ti
 
 Provider format follows https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses.
 
-
 ## VeerAI orchestration service design
 
 ### Purpose
 
 VeerAI must not access PostgreSQL, database connection strings or Entity Framework entities directly from the Angular client or from an external AI provider. The backend owns all data access and sends only approved, bounded evidence to the AI provider.
 
-### Request flow
+### Current implemented request flow
 
 ```
-Angular VeerAI workspace
-        ↓ HTTPS API
-VeerAI API endpoint
-        ↓ authenticated request
-VeerAiOrchestrationService
-        ↓ policy and intent checks
-Approved fleet read services
-        ↓ controlled queries
-Fleet database
+Angular VeerAI chat
+        |
+        | HTTPS: POST /api/veerai/chat
+        v
+VeerAI chat endpoint
+        |
+        | session, input-size and rate-limit checks
+        v
+IVeerAiOrchestrationService
+        |
+        +--> ResolveChatContextAsync
+        |       |
+        |       +--> checks AI_READ_ACCESS permissions
+        |       +--> resolves vehicle/Job Card context
+        |
+        +--> GetEvidenceAsync
+        |       |
+        |       +--> checks AI_READ_ACCESS permissions
+        |       +--> loads bounded read-only evidence
+        |
+        v
+Approved evidence package
+        |
+        v
+Server-side AI provider request
+        |
+        v
+Validated VeerAI response
+        |
+        v
+Angular chat response
 ```
 
-### Orchestration responsibilities
+The browser never calls PostgreSQL or the AI provider directly. The provider API key and database connection string remain server-side.
 
-1. Validate the authenticated session and request size.
+### Implemented orchestration responsibilities
+
+1. Validate the authenticated VeerAI session and request size.
 2. Resolve the vehicle or Job Card context; ask the user to clarify when multiple records match.
-3. Classify the request as supported Montra service/maintenance guidance or unsupported content.
-4. Check the enabled VeerAI read-access modules before requesting data.
-5. Call approved read-only fleet services, never arbitrary table queries from the UI.
-6. Build a bounded evidence package with source IDs, record labels, links and scope limits.
-7. Apply safety rules: no record changes, no QC/release approval, no hazardous bypass instructions and no invented specifications.
-8. Send the evidence package to the configured AI provider through a server-side credential.
-9. Validate the provider response and reject missing, unknown or unsupported citations.
-10. Return the answer, evidence sources, clarification choices or a safe error to Angular.
-11. Write an audit event without storing provider secrets or unnecessary sensitive prompt content.
+3. Check the enabled VeerAI read-access modules before requesting data.
+4. Call approved read-only fleet evidence readers.
+5. Build a bounded evidence package with source IDs and scope limits.
+6. Prevent Job Card context resolution and evidence loading when the Job Cards module is disabled.
+7. Send only the approved evidence and user question to the configured AI provider.
+8. Validate the provider response and reject missing, unknown or unsupported citations.
+9. Return the answer, evidence sources, clarification choices or a safe error to Angular.
+10. Keep all VeerAI operations advisory and read-only.
+
+### Module permission enforcement
+
+AI Configuration stores module permissions under the `AI_READ_ACCESS` category. The orchestration service checks the relevant module before accessing evidence.
+
+For example, when **Job Cards** is disabled:
+
+- Job Card references are not resolved by the orchestration service.
+- Job Card evidence is not loaded.
+- The AI receives no Job Card evidence.
+- General Montra guidance remains available.
+- Re-enabling Job Cards and loading the configuration restores Job Card context and evidence access.
+
+The permission is enforced in the backend orchestration layer, not only in the Angular checkbox. This prevents a user or client-side script from bypassing the UI restriction.
 
 ### API boundary
 
 - Angular calls only `/api/veerai/chat`, `/api/veerai/transcribe` and approved VeerAI endpoints.
 - The provider key exists only in server environment configuration.
 - The browser receives no SQL credentials, connection strings or unrestricted database data.
-- VeerAI operations are advisory and read-only. Any future write capability requires a separate approved workflow, user confirmation, authorization and audit trail.
+- VeerAI operations are advisory and read-only.
+- Any future write capability requires a separate approved workflow, user confirmation, authorization and audit trail.
 - API responses must avoid returning provider response bodies, secrets, SQL errors or stack traces.
+
+### Current implementation boundary and target design
+
+The current release has the orchestration service controlling session-related context resolution, module permissions and evidence loading. The chat endpoint still constructs the final provider HTTP request after obtaining the approved context and evidence from the orchestration service.
+
+The target design is to move that provider call into a dedicated provider abstraction:
+
+```
+IVeerAiOrchestrationService
+        |
+        +--> IAiPermissionService
+        +--> IVeerAiContextResolver
+        +--> IVeerAiEvidenceReader
+        +--> IVeerAiProvider
+                |
+                +--> OpenAiProvider
+```
+
+With that change, the HTTP endpoint will only validate transport concerns and call the orchestration service. The orchestration service will control the complete workflow: permissions, context, evidence, provider request, response validation and audit.
 
 ### Required result contract
 
