@@ -22,25 +22,25 @@ public static class VeeraiChat {
  public static (string Code,string Name)? RequestedModule(string message)
  {
   var text = message.ToUpperInvariant();
-  if (Regex.IsMatch(text, @"\\b(?:PART|STOCK|INVENTORY|SPARE|AVAILABILITY)\\b"))
+  if (Regex.IsMatch(text, @"\b(?:PART|STOCK|INVENTORY|SPARE|AVAILABILITY)\b"))
    return ("parts", "Parts and Inventory");
-  if (Regex.IsMatch(text, @"\\b(?:JOB CARD|JOBCARD|WORK ORDER|WORKORDER|JC-|WO-)\\b"))
+  if (Regex.IsMatch(text, @"\b(?:JOB CARD|JOBCARD|WORK ORDER|WORKORDER|JC-|WO-)\b"))
    return ("job-cards", "Job Cards");
-  if (Regex.IsMatch(text, @"\\b(?:VEHICLE|VIN|REGISTRATION|ODOMETER)\\b"))
+  if (Regex.IsMatch(text, @"\b(?:VEHICLE|VIN|REGISTRATION|ODOMETER)\b"))
    return ("vehicles", "Vehicles");
-  if (Regex.IsMatch(text, @"\\b(?:BREAKDOWN|FAULT|COMPLAINT|RSA)\\b"))
+  if (Regex.IsMatch(text, @"\b(?:BREAKDOWN|FAULT|COMPLAINT|RSA)\b"))
    return ("breakdowns", "Breakdowns");
-  if (Regex.IsMatch(text, @"\\b(?:APPOINTMENT|BOOKING|SCHEDULE)\\b"))
+  if (Regex.IsMatch(text, @"\b(?:APPOINTMENT|BOOKING|SCHEDULE)\b"))
    return ("appointments", "Appointments");
-  if (Regex.IsMatch(text, @"\\b(?:PREVENTIVE|PM|SERVICE DUE|OVERDUE)\\b"))
+  if (Regex.IsMatch(text, @"\b(?:PREVENTIVE|PM|SERVICE DUE|OVERDUE)\b"))
    return ("pm", "Preventive Maintenance");
-  if (Regex.IsMatch(text, @"\\b(?:TECHNICIAN|ENGINEER|MECHANIC)\\b"))
+  if (Regex.IsMatch(text, @"\b(?:TECHNICIAN|ENGINEER|MECHANIC)\b"))
    return ("technicians", "Technicians");
-  if (Regex.IsMatch(text, @"\\b(?:DOCUMENT|PHOTO|EVIDENCE|ATTACHMENT)\\b"))
+  if (Regex.IsMatch(text, @"\b(?:DOCUMENT|PHOTO|EVIDENCE|ATTACHMENT)\b"))
    return ("documents", "Documents and Evidence");
-  if (Regex.IsMatch(text, @"\\b(?:AUDIT|AUDIT TRAIL|HISTORY LOG)\\b"))
+  if (Regex.IsMatch(text, @"\b(?:AUDIT|AUDIT TRAIL|HISTORY LOG)\b"))
    return ("audit", "Audit Records");
-  if (Regex.IsMatch(text, @"\\b(?:SERVICE EVENT|SERVICE HISTORY|REPAIR HISTORY)\\b"))
+  if (Regex.IsMatch(text, @"\b(?:SERVICE EVENT|SERVICE HISTORY|REPAIR HISTORY)\b"))
    return ("service-events", "Service Events");
   return null;
  }
