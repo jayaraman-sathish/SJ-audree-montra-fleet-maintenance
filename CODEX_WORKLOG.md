@@ -506,3 +506,13 @@ Each response must contain a concise answer plus source identifiers where eviden
 - Unsupported question: return a clear scope refusal.
 
 The service must be independently testable with provider fixtures. Production merge requires backend build, Angular build, API authorization tests, read-only tests, response-citation tests and browser validation of the working VeerAI screen.
+
+
+## 2026-09-23 - VeerAI module access enforcement
+
+- Added module detection before VeerAI chat data retrieval.
+- Added no-access responses for disabled Vehicles, Job Cards, Service Events, Breakdowns, Appointments, PM, Parts and Inventory, Technicians, Documents and Audit Records modules.
+- Closed the pending-work shortcut path so it cannot bypass the Job Cards permission.
+- Confirmed disabled modules must not be queried or included in the AI evidence package.
+- Updated `docs/VEERAI.md` and `docs/KNOWLEDGE_BASE.md` with the control model and test expectation.
+- Validation required: .NET build, Angular build, disabled-module API tests, and browser tests for each configuration toggle.
