@@ -18,6 +18,8 @@ public static class AiConfiguration
         ("audit", "Audit Records")
     ];
 
+    public static string NameFor(string code) => Modules.FirstOrDefault(x => string.Equals(x.Code, code, StringComparison.OrdinalIgnoreCase)).Name ?? code;
+
     private static bool IsAdmin(HttpRequest request, IConfiguration configuration)
     {
         var expected = configuration["Veerai:AdminKey"];

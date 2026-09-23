@@ -1,6 +1,7 @@
 <section class="ai-config">
   <div class="page-title"><div><h2>AI Configuration</h2><p>Control which Montra data VeerAI may read. All access is read-only.</p></div></div>
   <div class="security-note"><strong>Security:</strong> VeerAI uses approved backend APIs. It cannot create, edit, approve, delete, close or release records.</div>
+  <div class="dependency-note"><strong>Dependency-aware access:</strong> business answers are allowed only when all related data areas are enabled. For example, Job Cards requires Vehicles and Service Events; disabling a dependency blocks the related answer.</div>
   <div class="admin-key">
     <label>AI Administrator key<input type="password" [(ngModel)]="key" placeholder="Enter configured Admin key"></label>
     <label>Updated by<input [(ngModel)]="updatedBy" placeholder="Administrator name"></label>
@@ -9,7 +10,7 @@
   <p class="alert" *ngIf="error">{{error}}</p><p class="success" *ngIf="message">{{message}}</p>
   <div class="access-list" *ngIf="modules.length">
     <div class="access-row" *ngFor="let item of modules">
-      <div><strong>{{item.name}}</strong><small>VeerAI may read this data through an approved API.</small></div>
+      <div><strong>{{item.name}}</strong><small>VeerAI may read this data through an approved API.</small><small class="dependency" *ngIf="dependencyNames(item).length">Requires: {{dependencyNames(item).join(', ')}}.</small><small class="blocked" *ngIf="blocked(item)">Blocked until all required data areas are enabled.</small></div>
       <label class="switch"><input type="checkbox" [(ngModel)]="item.enabled"><span></span><b>{{item.enabled?'Enabled':'Disabled'}}</b></label>
     </div>
   </div>
