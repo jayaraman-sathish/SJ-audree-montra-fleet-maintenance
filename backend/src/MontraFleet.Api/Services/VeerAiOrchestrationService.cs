@@ -22,6 +22,12 @@ public sealed class VeerAiOrchestrationService : IVeerAiOrchestrationService
         _configuration = configuration;
     }
 
+    public Task<VeerChatContext> ResolveChatContextAsync(string question, Guid? currentJobId, CancellationToken cancellationToken = default)
+        => VeeraiChat.Resolve(_db, question, currentJobId, cancellationToken);
+
+    public async Task<List<VeerSource>> GetEvidenceAsync(Guid jobCardId, CancellationToken cancellationToken = default)
+        => await Veerai.Sources(_db, jobCardId, cancellationToken) ?? new List<VeerSource>();
+
     public async Task<VeerAiOrchestrationResult?> AnalyseJobAsync(
         Guid jobCardId,
         string question,
