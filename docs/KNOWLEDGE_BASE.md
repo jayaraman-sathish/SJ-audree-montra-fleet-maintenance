@@ -55,3 +55,15 @@ The dashboard shell looked unfinished because the sidebar hierarchy was visually
 ## UI refresh review outcome
 
 The first shell redesign passed compilation but failed visual acceptance in local review. The corrective action is to restore the previous shell styling while retaining the backend metrics and record traceability. Future visual work must be isolated, locally reviewed at desktop and mobile widths, and merged only after acceptance.
+
+
+## VeerAI API boundary and working-screen rules
+
+- The Angular application communicates with VeerAI through backend HTTPS API endpoints only.
+- VeerAI must never receive database connection strings, SQL credentials or direct database access.
+- Backend APIs enforce authorization, rate limiting, approved read-only data areas and safe error responses.
+- The AI Configuration screen must load and save configuration through API calls; it must not use hard-coded production values.
+- Configuration saves must contain every approved data area exactly once. Partial or duplicate payloads are rejected.
+- VeerAI responses must preserve vehicle/Job Card context and show evidence/source identifiers where available.
+- Unsupported or ambiguous questions must produce a clear clarification/refusal response rather than invented fleet or technical data.
+- Changes are implemented on a feature branch and merged only after backend, Angular, API and browser checks pass.
