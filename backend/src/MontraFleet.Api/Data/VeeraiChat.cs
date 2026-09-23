@@ -47,7 +47,7 @@ public static class VeeraiChat {
  public static string NoMatch(string language)=>language switch{"ta-IN"=>"பொருத்தம் கிடைக்கவில்லை. Montra வாகன சேவை மற்றும் பராமரிப்பு குறித்து நான் உதவ முடியும்.","hi-IN"=>"कोई मिलान नहीं मिला। मैं Montra वाहन सेवा और रखरखाव में सहायता कर सकता हूँ।","ml-IN"=>"പൊരുത്തം കണ്ടെത്താനായില്ല. Montra വാഹന സേവനത്തിലും പരിപാലനത്തിലും ഞാൻ സഹായിക്കാം.",_=>"No match found. I can help with Montra vehicle service and maintenance."};
  public static bool Mentions(string question,string reference)=>Normalize(reference).Length>4&&Regex.IsMatch(question,@"(?<![A-Z0-9])"+string.Join(@"[\s-]*",Normalize(reference).Select(c=>Regex.Escape(c.ToString())))+@"(?![A-Z0-9])",RegexOptions.IgnoreCase);
  public static async Task<VeerChatContext> Resolve(AppDbContext db,string question,Guid? current,CancellationToken ct){
-  var rows=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id orderby e.OpenedAt descending select new{j.Id,j.JobCardNumber,v.Id as VehicleId,v.RegistrationNumber,e.OpenedAt}).ToListAsync(ct);
+  var rows=await (from j in db.JobCards.AsNoTracking() join e in db.ServiceEvents.AsNoTracking() on j.ServiceEventId equals e.Id join v in db.Vehicles.AsNoTracking() on e.VehicleId equals v.Id orderby e.OpenedAt descending select new{j.Id,j.JobCardNumber,VehicleId = v.Id,v.RegistrationNumber,e.OpenedAt}).ToListAsync(ct);
   var exact=rows.Where(x=>Mentions(question,x.JobCardNumber)).ToList();
   var vehicles=await db.Vehicles.AsNoTracking().Select(x=>x.RegistrationNumber).ToListAsync(ct);
   var matched=vehicles.Where(x=>Mentions(question,x)).ToList();
