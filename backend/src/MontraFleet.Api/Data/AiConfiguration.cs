@@ -71,8 +71,12 @@ public static class AiConfiguration
 
             await EnsureDefaults(db, ct);
             var allowed = Modules.Select(x => x.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (input.Modules is null || input.Modules.Any(x => !allowed.Contains(x.Code)))
-                return Results.BadRequest(new { message = "The AI configuration contains an unknown data area." });
+            var submitted = input.Modules ?? Array.Empty<AiConfigurationModule>();
+            var submittedCodes = submitted.Select(x => x.Code).ToArray();
+            if (submitted.Length != Modules.Length
+                || submittedCodes.Distinct(StringComparer.OrdinalIgnoreCase).Count() != Modules.Length
+                || submitted.Any(x => string.IsNullOrWhiteSpace(x.Code) || !allowed.Contains(x.Code)))
+                return Results.BadRequest(new { message = "The AI configuration must contain each approved data area exactly once." });
 
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             foreach (var module in Modules)

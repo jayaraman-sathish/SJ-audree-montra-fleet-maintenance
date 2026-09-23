@@ -438,3 +438,71 @@ Uploaded documents are currently stored and displayed. The next document-AI phas
 - Opened PR #91 to restore the original shell/sidebar/header styling.
 - The restoration intentionally preserves the backend action-queue APIs, record identifiers, dashboard bindings and document fixes.
 - A future UI redesign must be prototyped and visually reviewed locally before merge.
+
+
+## 2026-09-23 - Secure VeerAI API workspace
+
+- Created isolated branch `feature/secure-veerai-api-workspace`; no production or `main` branch changes are used during implementation.
+- Confirmed Angular VeerAI calls backend endpoints only; it does not connect to PostgreSQL or execute SQL.
+- Kept VeerAI read-only: data access is controlled by backend API authorization and the AI read-access configuration.
+- Strengthened configuration validation so a save must include every approved data area exactly once; partial or duplicate payloads are rejected instead of silently changing defaults.
+- The working screen must provide API-backed chat, vehicle/Job Card context, evidence/source records, safe error handling and refusal when approved data is unavailable.
+- Required validation before PR: .NET Release build, Angular production build, API authorization/configuration checks, read-only behavior and browser review of the AI Configuration screen.
+
+
+## VeerAI orchestration service design
+
+### Purpose
+
+VeerAI must not access PostgreSQL, database connection strings or Entity Framework entities directly from the Angular client or from an external AI provider. The backend owns all data access and sends only approved, bounded evidence to the AI provider.
+
+### Request flow
+
+```
+Angular VeerAI workspace
+        ↓ HTTPS API
+VeerAI API endpoint
+        ↓ authenticated request
+VeerAiOrchestrationService
+        ↓ policy and intent checks
+Approved fleet read services
+        ↓ controlled queries
+Fleet database
+```
+
+### Orchestration responsibilities
+
+1. Validate the authenticated session and request size.
+2. Resolve the vehicle or Job Card context; ask the user to clarify when multiple records match.
+3. Classify the request as supported Montra service/maintenance guidance or unsupported content.
+4. Check the enabled VeerAI read-access modules before requesting data.
+5. Call approved read-only fleet services, never arbitrary table queries from the UI.
+6. Build a bounded evidence package with source IDs, record labels, links and scope limits.
+7. Apply safety rules: no record changes, no QC/release approval, no hazardous bypass instructions and no invented specifications.
+8. Send the evidence package to the configured AI provider through a server-side credential.
+9. Validate the provider response and reject missing, unknown or unsupported citations.
+10. Return the answer, evidence sources, clarification choices or a safe error to Angular.
+11. Write an audit event without storing provider secrets or unnecessary sensitive prompt content.
+
+### API boundary
+
+- Angular calls only `/api/veerai/chat`, `/api/veerai/transcribe` and approved VeerAI endpoints.
+- The provider key exists only in server environment configuration.
+- The browser receives no SQL credentials, connection strings or unrestricted database data.
+- VeerAI operations are advisory and read-only. Any future write capability requires a separate approved workflow, user confirmation, authorization and audit trail.
+- API responses must avoid returning provider response bodies, secrets, SQL errors or stack traces.
+
+### Required result contract
+
+Each response must contain a concise answer plus source identifiers where evidence was used. When evidence is insufficient, the orchestration service must state what is missing. When the question is ambiguous, it must return selectable context choices instead of silently using another vehicle or Job Card.
+
+### Failure handling
+
+- Invalid session: return 401.
+- Disabled or incomplete provider configuration: return 503.
+- Ambiguous context: return clarification choices.
+- Provider timeout or invalid response: return a safe retry message; do not modify fleet records.
+- Rate limit exceeded: return 429.
+- Unsupported question: return a clear scope refusal.
+
+The service must be independently testable with provider fixtures. Production merge requires backend build, Angular build, API authorization tests, read-only tests, response-citation tests and browser validation of the working VeerAI screen.
