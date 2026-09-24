@@ -6,7 +6,7 @@ namespace MontraFleet.Api.Services;
 
 public sealed record VeerAiApiDefinition(
     string Key, string Route, string Method, string Module, string[] Dependencies,
-    string DataSensitivity, bool ReadOnly, string Owner, string Version, bool Enabled = true);
+    string DataSensitivity, bool ReadOnly, string Owner, string Version, bool Enabled = true, bool Custom = false);
 
 public static class VeeraiApiCatalog
 {
@@ -40,7 +40,7 @@ public static class VeeraiApiCatalog
                 return Results.BadRequest(new { message = "API ID, route, method and dependencies are required." });
             if (Definitions.Any(x => x.Key.Equals(input.Key, StringComparison.OrdinalIgnoreCase)) || await db.MasterOptions.AnyAsync(x => x.Category == "VEERAI_API_CATALOG" && x.Code == input.Key, ct))
                 return Results.Conflict(new { message = "API ID already exists." });
-            db.MasterOptions.Add(new Models.MasterOption { Category = "VEERAI_API_CATALOG", Code = input.Key.Trim(), Name = input.Route.Trim(), Value = JsonSerializer.Serialize(input with { Key = input.Key.Trim(), Enabled = true }), Description = "Administrator-registered VeerAI API", IsActive = true });
+            db.MasterOptions.Add(new Models.MasterOption { Category = "VEERAI_API_CATALOG", Code = input.Key.Trim(), Name = input.Route.Trim(), Value = JsonSerializer.Serialize(input with { Key = input.Key.Trim(), Enabled = true, Custom = true }), Description = "Administrator-registered VeerAI API", IsActive = true });
             await db.SaveChangesAsync(ct);
             return Results.Created("/api/ai/api-catalog/" + input.Key, input with { Key = input.Key.Trim(), Enabled = true });
         });
