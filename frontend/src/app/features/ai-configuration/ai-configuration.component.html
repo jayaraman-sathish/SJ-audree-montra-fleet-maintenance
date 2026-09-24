@@ -22,7 +22,7 @@
       <div><strong>{{api.method}} {{api.route}}</strong><small>{{api.module}} · Owner: {{api.owner}} · Version: {{api.version}}</small><small>Dependencies: {{api.dependencies.join(', ')}}</small></div>
       <span class="readonly">{{api.readOnly ? 'Read-only' : 'Review required'}} <button type="button" (click)="startApi(api)">Edit</button></span>
     </div>
-  <div class="api-editor" *ngIf="apiDraft.key || apiEditing">
+  <div class="api-editor" *ngIf="apiEditor">
     <h4>{{apiEditing?'Edit':'Register'}} VeerAI API</h4>
     <label>API ID<input [(ngModel)]="apiDraft.key" [disabled]="apiEditing"></label>
     <label>Route<input [(ngModel)]="apiDraft.route"></label>
