@@ -59,6 +59,7 @@ app.UseRateLimiter();
 AiConfiguration.Map(app);
 VeeraiApiCatalog.Map(app);
 DocumentUpload.MapDocumentUpload(app);
+VehicleRegistrationAndReportEndpoints.Map(app);
 
 using (var scope = app.Services.CreateScope())
 {
