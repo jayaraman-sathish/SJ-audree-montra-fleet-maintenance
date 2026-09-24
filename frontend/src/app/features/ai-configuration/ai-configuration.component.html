@@ -16,11 +16,25 @@
   </div>
   <button class="save" *ngIf="modules.length" (click)="save()" [disabled]="saving">{{saving?'Saving…':'Save AI configuration'}}</button>
   <section class="api-catalog" *ngIf="apis.length">
-    <h3>Registered VeerAI APIs</h3>
+    <h3>Registered VeerAI APIs</h3><button class="save" (click)="startApi()">Register API</button>
     <p class="catalog-note">Only APIs listed here may be used by VeerAI. New backend APIs must be registered and reviewed before production use.</p>
     <div class="api-row" *ngFor="let api of apis">
       <div><strong>{{api.method}} {{api.route}}</strong><small>{{api.module}} · Owner: {{api.owner}} · Version: {{api.version}}</small><small>Dependencies: {{api.dependencies.join(', ')}}</small></div>
-      <span class="readonly">{{api.readOnly ? 'Read-only' : 'Review required'}}</span>
+      <span class="readonly">{{api.readOnly ? 'Read-only' : 'Review required'}} <button type="button" (click)="startApi(api)">Edit</button></span>
     </div>
+  <div class="api-editor" *ngIf="apiDraft.key || apiEditing">
+    <h4>{{apiEditing?'Edit':'Register'}} VeerAI API</h4>
+    <label>API ID<input [(ngModel)]="apiDraft.key" [disabled]="apiEditing"></label>
+    <label>Route<input [(ngModel)]="apiDraft.route"></label>
+    <label>Method<select [(ngModel)]="apiDraft.method"><option>GET</option><option>POST</option><option>PUT</option><option>INTERNAL</option></select></label>
+    <label>Module<input [(ngModel)]="apiDraft.module"></label>
+    <label>Dependencies (comma separated)<input [(ngModel)]="apiDraft.dependenciesText"></label>
+    <label>Owner<input [(ngModel)]="apiDraft.owner"></label>
+    <label>Version<input [(ngModel)]="apiDraft.version"></label>
+    <label><input type="checkbox" [(ngModel)]="apiDraft.readOnly"> Read-only</label>
+    <label><input type="checkbox" [(ngModel)]="apiDraft.enabled"> Enabled</label>
+    <button class="save" (click)="saveApi()">Save API registration</button>
+    <button type="button" (click)="cancelApi()">Cancel</button>
+  </div>
   </section>
 </section>
