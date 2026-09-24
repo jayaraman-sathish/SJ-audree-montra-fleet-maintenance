@@ -568,3 +568,12 @@ This follows the standard ERP pattern: a governed read-only integration/API laye
 - Reports are read-only HTML documents with browser Print / Save as PDF support and include the current vehicle/job context plus maintenance/task history.
 - The current phase intentionally uses the VeerAI administrator key because RBAC is not yet implemented. Reports and enrollment mutations are not public endpoints.
 - Follow-up UI work: expose Edit Vehicle and report actions in the Vehicle Enrollment and Job Card screens, and add persistent API catalog registration/edit administration rather than only the current static catalog.
+
+
+## 2026-09-24 - VeerAI API catalog administration
+
+- Added administrator-key protected persistent API registration using the existing master-option store.
+- Added API ID, route, method, module, dependencies, owner, version, read-only and enabled fields.
+- Added administrator-only API edit for custom registrations; built-in platform APIs remain code-governed.
+- Added AI Configuration UI controls to register and edit custom API registrations.
+- Unregistered APIs remain fail-closed and are not presented as approved VeerAI capabilities.
