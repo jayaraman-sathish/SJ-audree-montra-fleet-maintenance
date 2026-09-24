@@ -558,3 +558,13 @@ AI Configuration displays the dependency relationship and warns when a business 
 ## Enterprise control pattern
 
 This follows the standard ERP pattern: a governed read-only integration/API layer, least-privilege business scopes, dependency-aware authorization, evidence minimization, auditability, and explicit “no access” behavior. AI provider credentials remain server-side configuration and are never sent to the browser.
+
+
+## 2026-09-24 - Admin vehicle enrollment and printable reports
+
+- Added administrator-key protected vehicle enrollment create and edit endpoints.
+- Vehicle identity remains stable by internal GUID; VIN and registration number are checked for uniqueness.
+- Added administrator-key protected printable Vehicle Maintenance and Job Card Completion report endpoints.
+- Reports are read-only HTML documents with browser Print / Save as PDF support and include the current vehicle/job context plus maintenance/task history.
+- The current phase intentionally uses the VeerAI administrator key because RBAC is not yet implemented. Reports and enrollment mutations are not public endpoints.
+- Follow-up UI work: expose Edit Vehicle and report actions in the Vehicle Enrollment and Job Card screens, and add persistent API catalog registration/edit administration rather than only the current static catalog.
