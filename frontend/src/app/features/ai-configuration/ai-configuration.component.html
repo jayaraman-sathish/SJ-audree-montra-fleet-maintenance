@@ -20,7 +20,7 @@
     <p class="catalog-note">Only APIs listed here may be used by VeerAI. New backend APIs must be registered and reviewed before production use.</p>
     <div class="api-row" *ngFor="let api of apis">
       <div><strong>{{api.method}} {{api.route}}</strong><small>{{api.module}} · Owner: {{api.owner}} · Version: {{api.version}}</small><small>Dependencies: {{api.dependencies.join(', ')}}</small></div>
-      <span class="readonly">{{api.readOnly ? 'Read-only' : 'Review required'}} <button type="button" (click)="startApi(api)">Edit</button></span>
+      <span class="readonly">{{api.readOnly ? 'Read-only' : 'Review required'}} <button type="button" *ngIf="api.custom" (click)="startApi(api)">Edit</button></span>
     </div>
   <div class="api-editor" *ngIf="apiEditor">
     <h4>{{apiEditing?'Edit':'Register'}} VeerAI API</h4>
