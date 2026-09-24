@@ -72,7 +72,7 @@ public static class VehicleRegistrationAndReportEndpoints
         {
             if (!IsAdmin(request, configuration)) return Results.Unauthorized();
             var job = await db.JobCards.AsNoTracking().Where(x => x.Id == id)
-                .Select(x => new { x.JobCardNumber, x.Status, x.OpenedAt, x.ClosedAt, x.ServiceEventId }).SingleOrDefaultAsync(ct);
+                .Select(x => new { x.JobCardNumber, x.Status, x.StartedAt, x.CompletedAt, x.ServiceEventId }).SingleOrDefaultAsync(ct);
             if (job is null) return Results.NotFound();
             var tasks = await db.WorkItems.AsNoTracking().Where(x => x.JobCardId == id)
                 .Select(x => new { x.TaskCode, x.Description, x.Status, x.AssignedTo, x.CompletionRemarks }).ToListAsync(ct);
