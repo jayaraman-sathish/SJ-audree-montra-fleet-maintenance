@@ -65,7 +65,10 @@ public static class VehicleRegistrationAndReportEndpoints
             if (vehicle is null) return Results.NotFound();
             var history = await db.ServiceEvents.AsNoTracking().Where(x => x.VehicleId == id)
                 .OrderByDescending(x => x.OpenedAt).Select(x => new { x.EventNumber, x.EventType, x.Status, x.OpenedAt, x.ClosedAt }).ToListAsync(ct);
-            return Results.Content(PrintHtml("Vehicle Maintenance Report", vehicle.RegistrationNumber, JsonSerializer.Serialize(new { vehicle, history })), "text/html", Encoding.UTF8);
+            var summary = $"<div class='summary-grid'>{Field("VIN", vehicle.Vin)}{Field("Model", vehicle.Model)}{Field("Variant", vehicle.Variant)}{Field("Status", vehicle.Status)}{Field("Odometer", vehicle.OdometerKm.ToString("N0") + " km")}{Field("Operating hours", vehicle.OperatingHours.ToString("N0") + " hr")}{Field("Energy", vehicle.EnergyKwh.ToString("N0") + " kWh")}{Field("Depot", vehicle.DepotCode)}{Field("Service centre", vehicle.ServiceCentreCode)}</div>";
+            var rows = string.Join("", history.Select(x => $"<tr><td>{E(x.EventNumber)}</td><td>{E(x.EventType)}</td><td>{E(x.Status)}</td><td>{x.OpenedAt:dd-MMM-yyyy}</td><td>{(x.ClosedAt.HasValue ? x.ClosedAt.Value.ToString("dd-MMM-yyyy") : "Open")}</td></tr>"));
+            var historyHtml = $"<h2>Service history</h2><table><thead><tr><th>Event</th><th>Type</th><th>Status</th><th>Opened</th><th>Closed</th></tr></thead><tbody>{rows}</tbody></table>";
+            return Results.Content(PrintHtml("Vehicle Maintenance Report", vehicle.RegistrationNumber, summary + historyHtml), "text/html", Encoding.UTF8);
         });
 
         app.MapGet("/api/reports/job-cards/{id:guid}", async (Guid id, HttpRequest request, AppDbContext db, IConfiguration configuration, CancellationToken ct) =>
@@ -76,15 +79,19 @@ public static class VehicleRegistrationAndReportEndpoints
             if (job is null) return Results.NotFound();
             var tasks = await db.WorkItems.AsNoTracking().Where(x => x.JobCardId == id)
                 .Select(x => new { x.TaskCode, x.Description, x.Status, x.AssignedTo, x.CompletionRemarks }).ToListAsync(ct);
-            return Results.Content(PrintHtml("Job Card Completion Report", job.JobCardNumber, JsonSerializer.Serialize(new { job, tasks })), "text/html", Encoding.UTF8);
+            var summary = $"<div class='summary-grid'>{Field("Job card", job.JobCardNumber)}{Field("Status", job.Status)}{Field("Started", job.StartedAt?.ToString("dd-MMM-yyyy") ?? "—")}{Field("Completed", job.CompletedAt?.ToString("dd-MMM-yyyy") ?? "—")}</div>";
+            var rows = string.Join("", tasks.Select(x => $"<tr><td>{E(x.TaskCode)}</td><td>{E(x.Description)}</td><td>{E(x.Status)}</td><td>{E(x.AssignedTo)}</td><td>{E(x.CompletionRemarks)}</td></tr>"));
+            var taskHtml = $"<h2>Completed work</h2><table><thead><tr><th>Task</th><th>Description</th><th>Status</th><th>Assigned to</th><th>Remarks</th></tr></thead><tbody>{rows}</tbody></table>";
+            return Results.Content(PrintHtml("Job Card Completion Report", job.JobCardNumber, summary + taskHtml), "text/html", Encoding.UTF8);
         });
     }
 
-    private static string PrintHtml(string title, string subject, string json)
+    private static string PrintHtml(string title, string subject, string body)
     {
-        var safe = WebUtility.HtmlEncode(json);
-        return $"<!doctype html><html><head><meta charset='utf-8'><title>{WebUtility.HtmlEncode(title)}</title><style>body{{font-family:Arial;margin:32px;color:#14213d}}button{{padding:10px 18px}}pre{{white-space:pre-wrap;background:#f5f7fb;padding:18px}}</style></head><body><button onclick='print()'>Print / Save PDF</button><h1>{WebUtility.HtmlEncode(title)}</h1><h2>{WebUtility.HtmlEncode(subject)}</h2><pre>{safe}</pre></body></html>";
+        return $"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>{E(title)}</title><style>body{{font-family:Arial,sans-serif;margin:32px;color:#14213d;max-width:1100px}}button{{padding:10px 18px;border:0;border-radius:6px;background:#1266d5;color:white;font-weight:700}}h1{{margin-bottom:4px}}h2{{margin-top:28px;border-bottom:1px solid #dbe3ef;padding-bottom:8px}}.summary-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:20px 0}}.field{{border:1px solid #dbe3ef;border-radius:8px;padding:12px}}.field b{{display:block;color:#64748b;font-size:12px;margin-bottom:6px}}table{{border-collapse:collapse;width:100%;margin-top:12px}}th,td{{border:1px solid #dbe3ef;padding:10px;text-align:left;vertical-align:top}}th{{background:#f5f7fb}}@media print{{button{{display:none}}body{{margin:12mm}}}}</style></head><body><button onclick='print()'>Print / Save PDF</button><h1>{E(title)}</h1><p><b>Record:</b> {E(subject)} · Generated {DateTime.UtcNow:dd-MMM-yyyy HH:mm} UTC</p>{body}</body></html>";
     }
+    private static string E(object? value) => WebUtility.HtmlEncode(value?.ToString() ?? "—");
+    private static string Field(string label, string? value) => $"<div class='field'><b>{E(label)}</b>{E(value)}</div>";
 }
 
 public sealed record VehicleEnrollmentRequest(
