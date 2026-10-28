@@ -74,6 +74,8 @@ using (var scope = app.Services.CreateScope())
       ALTER TABLE "PartTransactions" ADD COLUMN IF NOT EXISTS "Reference" text NOT NULL DEFAULT '';
     """);
     await db.Database.ExecuteSqlRawAsync("""
+      DROP INDEX IF EXISTS "IX_WorkItems_TaskCode";
+      CREATE UNIQUE INDEX IF NOT EXISTS "IX_WorkItems_JobCardId_TaskCode" ON "WorkItems" ("JobCardId", "TaskCode");
       ALTER TABLE "ServiceEvents" ADD COLUMN IF NOT EXISTS "OpenedOdometerKm" numeric NULL;
       ALTER TABLE "SlaClocks" ADD COLUMN IF NOT EXISTS "StoppedAt" timestamptz NULL;
       ALTER TABLE "VehicleDocuments" ALTER COLUMN "VehicleId" DROP NOT NULL;
@@ -231,7 +233,7 @@ using (var scope = app.Services.CreateScope())
         ALTER TABLE "WorkItems" ADD COLUMN IF NOT EXISTS "UpdatedAt" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
         CREATE UNIQUE INDEX IF NOT EXISTS "IX_Appointments_AppointmentNumber" ON "Appointments" ("AppointmentNumber") WHERE "AppointmentNumber" <> '';
-        CREATE UNIQUE INDEX IF NOT EXISTS "IX_WorkItems_TaskCode" ON "WorkItems" ("TaskCode") WHERE "TaskCode" <> '';
+        CREATE UNIQUE INDEX IF NOT EXISTS "IX_WorkItems_JobCardId_TaskCode" ON "WorkItems" ("JobCardId", "TaskCode") WHERE "TaskCode" <> '';
         CREATE TABLE IF NOT EXISTS "PartMasters" (
             "Id" uuid PRIMARY KEY, "PartNumber" text NOT NULL, "Description" text NOT NULL DEFAULT '', "Category" text NOT NULL DEFAULT '',
             "UnitOfMeasure" text NOT NULL DEFAULT 'EA', "ManufacturerPartNumber" text NOT NULL DEFAULT '', "IsSerialized" boolean NOT NULL DEFAULT false,
@@ -750,9 +752,24 @@ using (var scope = app.Services.CreateScope())
     await EnsureVariant(rhino,"RHINO_5538_6X4","Rhino 5538 EV 6x4",null,"6x4");
     await EnsureVariant(tipper,"TIPPER_2868_6X4","Tipper 2868 EV 6x4",null,"6x4 Tipper");
 
+    // Variant codes used by DemoVehicleSeedV179 and the requirements baseline.
+    // The portfolio codes above and these had drifted apart, so every demo
+    // vehicle was being skipped by "if (variant is null) continue".
+    await EnsureVariant(superAuto,"EPL20-STD","ePL 2.0 Standard",10.6m,"Passenger 3W");
+    await EnsureVariant(superAuto,"EPL20R-STD","ePL 2.0 R",10.6m,"Passenger 3W");
+    await EnsureVariant(superCargo,"SCARGO-CGO","Super Cargo",null,"Cargo 3W");
+    await EnsureVariant(eviator,"EVI350-32","EVIATOR 350 (32 kWh)",32m,"Urban / short-distance");
+    await EnsureVariant(eviator,"EVICORE-40","EVIATOR core (40 kWh)",40m,"Core EVIATOR");
+    await EnsureVariant(eviator,"EVI350LP-50","EVIATOR 350L+ (50 kWh)",50m,"Long-distance / intercity");
+    await EnsureVariant(rhino,"RH5538-4X2","Rhino 5538 EV 4x2",282m,"4x2 Tractor Trailer");
+    await EnsureVariant(rhino,"RH5538-6X4","Rhino 5538 EV 6x4",282m,"6x4 Tractor Trailer");
+    await EnsureVariant(tractor27,"E27-2WD","Tractor e-27 2WD",22.37m,"2WD");
+    await EnsureVariant(tractor27,"E27-4WD","Tractor e-27 4WD",22.37m,"4WD");
+
     await PmMasterSeedV177.SeedAsync(db);
     await DemoVehicleSeedV179.SeedAsync(db);
     await ResourceMasterSeedV1814.SeedAsync(db);
+    await DemoWorkflowSeedV1826.SeedAsync(db);   // demo workload: only on an empty system
     await VehicleImages.SeedReferences(db);
     await db.ReconcileVisitStatusesAsync();
     await db.ReconcileControlsAsync();

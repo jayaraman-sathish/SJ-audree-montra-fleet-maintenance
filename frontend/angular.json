@@ -8,7 +8,7 @@
       "sourceRoot":"src",
       "architect":{
         "build":{"builder":"@angular-devkit/build-angular:application","options":{"outputHashing":"all","outputPath":"dist/montra-fleet-web","index":"src/index.html","browser":"src/main.ts","tsConfig":"tsconfig.app.json","styles":["src/styles.css"],"assets":["src/assets"]}},
-        "serve":{"builder":"@angular-devkit/build-angular:dev-server","options":{"buildTarget":"montra-fleet-web:build"}}
+        "serve":{"builder":"@angular-devkit/build-angular:dev-server","options":{"buildTarget":"montra-fleet-web:build","proxyConfig":"proxy.conf.json"}}
       }
     }
   },

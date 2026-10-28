@@ -132,7 +132,10 @@ public partial class AppDbContext(DbContextOptions<AppDbContext> options) : DbCo
         m.Entity<LabourEntry>().Property(x => x.Hours).HasPrecision(18, 2);
         m.Entity<Appointment>().Property(x => x.PlannedHours).HasPrecision(18, 2);
         m.Entity<Appointment>().HasIndex(x => x.AppointmentNumber).IsUnique();
-        m.Entity<WorkItem>().HasIndex(x => x.TaskCode).IsUnique();
+        // A standard task code (BRK-01, HV-01 ...) recurs on every job card that
+        // performs it. Unique on TaskCode alone allowed it on only one job card
+        // in the whole system; the second save failed on the unique index.
+        m.Entity<WorkItem>().HasIndex(x => new { x.JobCardId, x.TaskCode }).IsUnique();
         m.Entity<WorkItem>().Property(x => x.EstimatedHours).HasPrecision(18, 2);
         m.Entity<WorkItem>().Property(x => x.ActualHours).HasPrecision(18, 2);
         m.Entity<WorkLogEntry>().HasIndex(x => new { x.JobCardId, x.CreatedAt });
